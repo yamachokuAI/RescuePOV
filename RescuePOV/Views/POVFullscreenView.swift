@@ -7,11 +7,9 @@ public struct POVFullscreenView: View {
     let text: String
     let direction: POVDirection
     let color: POVColor
-    let mode: POVDisplayMode
     let mirrorForViewer: Bool
     
     @StateObject private var motionDetector = MotionDetector.shared
-    @StateObject private var spatialTracker = SpatialMotionTracker.shared
     
     @State private var previousBrightness: CGFloat = 0.5
     @State private var slices: [[Bool]] = []
@@ -22,13 +20,11 @@ public struct POVFullscreenView: View {
         text: String,
         direction: POVDirection,
         color: POVColor,
-        mode: POVDisplayMode = .spatialWindow,
         mirrorForViewer: Bool = true
     ) {
         self.text = text
         self.direction = direction
         self.color = color
-        self.mode = mode
         self.mirrorForViewer = mirrorForViewer
     }
     
@@ -37,25 +33,13 @@ public struct POVFullscreenView: View {
             // 背景黒
             Color.black.ignoresSafeArea()
             
-            // モードに応じたレンダラーの切り替え
-            if mode == .spatialWindow {
-                // 【新方式】角度連動・空間固定バーチャルウィンドウ
-                SpatialWindowCanvasView(
-                    text: text,
-                    direction: direction,
-                    color: isTestFlash ? .white : color,
-                    mirrorForViewer: mirrorForViewer
-                )
-                .ignoresSafeArea()
-            } else {
-                // 【従来方式】CADisplayLinkによるスリット残像キャンバス
-                POVCanvasRepresentable(
-                    slices: slices,
-                    direction: direction,
-                    color: isTestFlash ? UIColor.white : color.uiColor
-                )
-                .ignoresSafeArea()
-            }
+            // CADisplayLink＋位置同期による極細スリット残像キャンバス
+            POVCanvasRepresentable(
+                slices: slices,
+                direction: direction,
+                color: isTestFlash ? UIColor.white : color.uiColor
+            )
+            .ignoresSafeArea()
             
             // テスト発光フラッシュオーバーレイ
             if isTestFlash {
@@ -63,19 +47,18 @@ public struct POVFullscreenView: View {
             }
             
             // 突入時の分かりやすい開始ガイド（2.2秒後に自動消滅、またはタップで即消去）
+            // 突入時の分かりやすい開始ガイド（2.2秒後に自動消滅、またはタップで即消去）
             if showInitialGuide {
                 VStack(spacing: 16) {
-                    Image(systemName: mode == .spatialWindow ? "gyroscope" : direction.iconName)
+                    Image(systemName: direction.iconName)
                         .font(.system(size: 64, weight: .bold))
                         .foregroundColor(.yellow)
                     
-                    Text("【\(mode.shortTitle)モード開始】")
+                    Text("【スリットPOVモード開始】")
                         .font(.title2.bold())
                         .foregroundColor(.white)
                     
-                    Text(mode == .spatialWindow
-                         ? "iPhoneの画面を相手に向け\n頭上で腕を左右にゆったりと振ってください"
-                         : "iPhoneの画面を相手に向け\n腕を左右に大きく素早く振ってください！")
+                    Text("iPhoneの画面を相手に向け\n腕を左右に大きくしっかり振ってください！")
                         .font(.headline)
                         .multilineTextAlignment(.center)
                         .foregroundColor(.white)
@@ -121,23 +104,6 @@ public struct POVFullscreenView: View {
                     
                     Spacer()
                     
-                    // 空間固定モード時: センター再調整ボタン
-                    if mode == .spatialWindow {
-                        Button(action: {
-                            spatialTracker.recenter()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "scope")
-                                Text("中心補正")
-                            }
-                            .font(.caption.bold())
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(Capsule().fill(Color.blue.opacity(0.8)))
-                            .foregroundColor(.white)
-                        }
-                    }
-                    
                     // 点灯テストボタン
                     Button(action: {
                         flashScreen()
@@ -161,24 +127,18 @@ public struct POVFullscreenView: View {
                 // 下部ステータス
                 HStack(spacing: 12) {
                     Circle()
-                        .fill(Color.green)
+                        .fill(motionDetector.currentPhase == .forward ? Color.green : Color.gray)
                         .frame(width: 8, height: 8)
                     
-                    Text("モード: \(mode.shortTitle)")
+                    Text(motionDetector.currentPhase == .forward ? "発光中 (往路)" : "消灯中 (復路)")
                         .font(.caption2.bold())
                         .foregroundColor(.white.opacity(0.9))
                     
                     Spacer()
                     
-                    if mode == .spatialWindow {
-                        Text(String(format: "傾き: %+.0f°", spatialTracker.currentAngleDegrees))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundColor(.yellow)
-                    } else {
-                        Text(String(format: "位置: %.0f%% (振れ幅: %.0f°)", motionDetector.strokeProgress * 100.0, motionDetector.strokeAngleRange))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundColor(.green)
-                    }
+                    Text(String(format: "位置: %.0f%% (振れ幅: %.0f°)", motionDetector.strokeProgress * 100.0, motionDetector.strokeAngleRange))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundColor(.green)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
@@ -200,19 +160,15 @@ public struct POVFullscreenView: View {
             UIScreen.main.brightness = 1.0
             UIApplication.shared.isIdleTimerDisabled = true
             
-            if mode == .spatialWindow {
-                spatialTracker.start(direction: direction)
-            } else {
-                // スライスマトリクス生成
-                self.slices = BitmapGenerator.shared.generateSlices(
-                    text: text,
-                    direction: direction,
-                    targetSlices: 36,
-                    sliceResolution: 24,
-                    mirrorForViewer: mirrorForViewer
-                )
-                motionDetector.start(direction: direction)
-            }
+            // 5x7高密度ドットフォントによるスライスマトリクス生成（白残像防止）
+            self.slices = BitmapGenerator.shared.generateSlices(
+                text: text,
+                direction: direction,
+                targetSlices: 36,
+                sliceResolution: 24,
+                mirrorForViewer: mirrorForViewer
+            )
+            motionDetector.start(direction: direction)
             
             // 2.0秒後にガイドを自動フェードアウト
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
@@ -224,11 +180,7 @@ public struct POVFullscreenView: View {
         .onDisappear {
             UIScreen.main.brightness = previousBrightness
             UIApplication.shared.isIdleTimerDisabled = false
-            if mode == .spatialWindow {
-                spatialTracker.stop()
-            } else {
-                motionDetector.stop()
-            }
+            motionDetector.stop()
         }
     }
     

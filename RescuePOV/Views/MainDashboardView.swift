@@ -2,7 +2,6 @@ import SwiftUI
 
 public struct MainDashboardView: View {
     @State private var targetText: String = "HELP"
-    @State private var selectedMode: POVDisplayMode = .spatialWindow
     @State private var selectedDirection: POVDirection = .horizontal
     @State private var selectedColor: POVColor = .white
     @State private var mirrorForViewer: Bool = true
@@ -10,7 +9,6 @@ public struct MainDashboardView: View {
     @State private var isShowingSampling: Bool = false
     
     @ObservedObject private var motionDetector = MotionDetector.shared
-    @ObservedObject private var spatialTracker = SpatialMotionTracker.shared
     @ObservedObject private var locationService = LocationService.shared
     @State private var copiedLocation: Bool = false
     
@@ -25,7 +23,7 @@ public struct MainDashboardView: View {
                 VStack(spacing: 20) {
                     previewSection
                     mainStartButton
-                    modeSelectionSection
+                    samplingSection
                     textSettingSection
                     directionAndColorSection
                     EmergencyToolbar()
@@ -53,12 +51,9 @@ public struct MainDashboardView: View {
     private var previewSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Label(
-                    selectedMode == .spatialWindow ? "空間固定ウィンドウ・プレビュー" : "残像スリット・プレビュー",
-                    systemImage: selectedMode == .spatialWindow ? "gyroscope" : "eye.fill"
-                )
-                .font(.caption.bold())
-                .foregroundColor(.secondary)
+                Label("極細スリット残像プレビュー (POV)", systemImage: "eye.fill")
+                    .font(.caption.bold())
+                    .foregroundColor(.secondary)
                 Spacer()
                 Text("振った際の見え方イメージ")
                     .font(.caption2)
@@ -74,41 +69,25 @@ public struct MainDashboardView: View {
                             .stroke(Color.white.opacity(0.1), lineWidth: 1)
                     )
                 
-                if selectedMode == .spatialWindow {
-                    ZStack {
-                        Text(targetText)
-                            .font(.system(size: 34, weight: .heavy, design: .rounded))
-                            .foregroundColor(selectedColor.swiftUIColor)
-                            .shadow(color: selectedColor.swiftUIColor, radius: 12)
-                            .tracking(10)
-                        
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.yellow, lineWidth: 2)
-                            .background(Color.yellow.opacity(0.08))
-                            .frame(width: 60, height: 95)
-                            .offset(x: previewOffset)
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        Text(targetText)
-                            .font(.system(size: 38, weight: .black, design: .monospaced))
-                            .foregroundColor(selectedColor.swiftUIColor.opacity(0.35))
-                            .blur(radius: 6)
-                            .offset(x: previewOffset * 0.7)
-                        
-                        Text(targetText)
-                            .font(.system(size: 38, weight: .black, design: .monospaced))
-                            .foregroundColor(selectedColor.swiftUIColor)
-                            .shadow(color: selectedColor.swiftUIColor, radius: 10)
-                            .offset(x: previewOffset)
-                    }
+                HStack(spacing: 12) {
+                    Text(targetText)
+                        .font(.system(size: 38, weight: .black, design: .monospaced))
+                        .foregroundColor(selectedColor.swiftUIColor.opacity(0.35))
+                        .blur(radius: 6)
+                        .offset(x: previewOffset * 0.7)
+                    
+                    Text(targetText)
+                        .font(.system(size: 38, weight: .black, design: .monospaced))
+                        .foregroundColor(selectedColor.swiftUIColor)
+                        .shadow(color: selectedColor.swiftUIColor, radius: 10)
+                        .offset(x: previewOffset)
                 }
                 
                 VStack {
                     Spacer()
                     HStack {
                         Image(systemName: "arrow.left")
-                        Text(selectedMode == .spatialWindow ? "角度に連動して空中に文字が固定" : "左右に素早く振る")
+                        Text("左右に素早く大きく振る")
                             .font(.caption2.bold())
                         Image(systemName: "arrow.right")
                     }
@@ -138,16 +117,14 @@ public struct MainDashboardView: View {
             VStack(spacing: 8) {
                 HStack(spacing: 10) {
                     Image(systemName: "play.circle.fill")
-                        .font(.title)
-                    Text("全画面で空中文字を開始")
-                        .font(.title2.weight(.heavy))
+                        .font(.system(size: 32, weight: .bold))
+                    Text("救難POV送信を開始")
+                        .font(.title2.bold())
                 }
                 
                 HStack(spacing: 6) {
-                    Text("「\(targetText)」(\(selectedMode.shortTitle))")
-                        .bold()
-                    Text("•")
-                    Text("タップして暗闇で振る")
+                    Image(systemName: "hand.wave.fill")
+                    Text("タップして暗闇で振る（位置同期・白飛び防止スリット）")
                 }
                 .font(.subheadline)
                 .opacity(0.95)
@@ -174,69 +151,32 @@ public struct MainDashboardView: View {
                 text: targetText,
                 direction: selectedDirection,
                 color: selectedColor,
-                mode: selectedMode,
                 mirrorForViewer: mirrorForViewer
             )
         }
     }
     
-    // MARK: - 3. 表示モード選択セクション
+    // MARK: - 3. スイング適応・サンプリングセクション
     @ViewBuilder
-    private var modeSelectionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var samplingSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("表示方式の選択")
+                Text("スイング適応エンジン")
                     .font(.headline)
                     .foregroundColor(.white)
                 Spacer()
-                if selectedMode == .spatialWindow {
-                    Text("高視認性")
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Capsule().fill(Color.green.opacity(0.25)))
-                        .foregroundColor(.green)
-                }
+                Text("位置同期・白残像防止")
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill(Color.green.opacity(0.25)))
+                    .foregroundColor(.green)
             }
             
-            Picker("表示方式", selection: $selectedMode) {
-                ForEach(POVDisplayMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            
-            Text(selectedMode.description)
+            Text("角速度リアルタイム積分による位置駆動スリット＋5x7精密ドットフォントにより、左右の振り速度の偏り（ヒステリシス）があっても空間に文字が正確に結像します。")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .lineSpacing(3)
-            
-            if selectedMode == .spatialWindow {
-                Divider().background(Color.white.opacity(0.1))
-                
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("振り幅感度（角度レンジ）")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(String(format: "±%.0f度", spatialTracker.maxSwingAngleRadians * 180.0 / .pi))
-                            .font(.caption.monospacedDigit().bold())
-                            .foregroundColor(.yellow)
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { spatialTracker.maxSwingAngleRadians },
-                            set: { spatialTracker.maxSwingAngleRadians = $0 }
-                        ),
-                        in: 0.35...0.80,
-                        step: 0.02
-                    )
-                    .tint(.yellow)
-                }
-            }
-            
-            Divider().background(Color.white.opacity(0.1))
             
             // スイング・ヒステリシス計測シートを開くボタン
             Button(action: {
@@ -248,7 +188,7 @@ public struct MainDashboardView: View {
                 }
                 .font(.caption.bold())
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
+                .padding(.vertical, 12)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.purple.opacity(0.3)))
                 .foregroundColor(.purple)
                 .overlay(
