@@ -20,7 +20,8 @@ public final class MotionDetector: ObservableObject {
     @Published public private(set) var currentPhase: SwingPhase = .forward
     @Published public private(set) var isEmitting: Bool = false                 // 最高速中間域で文字スリット発光中フラグ
     @Published public private(set) var isDeviceHorizontal: Bool = false         // 端末が手元で水平に保たれているか（ボタン表示用）
-    @Published public private(set) var strokeProgress: Double = 0.0             // 空間位置の進行度 (0.0: 左端 ... 1.0: 右端)
+    @Published public private(set) var isUpsideDown: Bool = false               // 端末が上下逆さまに持たれているか（電源ボタン誤押し回避）
+    @Published public private(set) var strokeProgress: Double = 0.0             // 現在のスイングにおける進行度 (0.0: 振り始め ... 1.0: 振り終わり)
     @Published public private(set) var swingIntensity: Double = 0.0             // 振りの勢い（角速度 rad/s または G）
     @Published public private(set) var currentAngleDegrees: Double = 0.0        // 現在の空間角度（度）
     @Published public private(set) var strokeAngleRange: Double = 95.0          // 学習されたスイング振れ幅（度）
@@ -31,11 +32,12 @@ public final class MotionDetector: ObservableObject {
     @Published public var strokeSensitivity: Double = 1.0                       // 振り幅感度調整 (0.7〜1.5)
     
     // 中間域発光ウィンドウ設定（両端の減速域をカットして最高速ゾーンのみ発光）
-    public var windowStartRatio: Double = 0.18                                 // ストローク開始18%は消灯
-    public var windowEndRatio: Double = 0.82                                   // ストローク終了82%以降は消灯
+    public var windowStartRatio: Double = 0.15                                 // スイング開始15%は消灯
+    public var windowEndRatio: Double = 0.85                                   // スイング終了85%以降は消灯
     
     // 内部トラッキング用
     private var currentTheta: Double = 0.0
+    private var swingStartTheta: Double = 0.0   // 現在のスイング開始時の角度
     private var leftTurnAngle: Double = -0.80   // 左端（rad）約 -46度
     private var rightTurnAngle: Double = 0.85   // 右端（rad）約 +49度
     private var learnedStrokeWidth: Double = 1.65 // 平均振れ幅（rad）約 95度
@@ -104,10 +106,12 @@ public final class MotionDetector: ObservableObject {
         let gyro = invertSwingDirection ? -rawGyro : rawGyro
         self.swingIntensity = abs(gyro)
         
-        // 1. 水平検知（頭上掲揚スイング中はUI完全非表示、手元で水平に戻したらUI表示）
+        // 1. 水平検知＆上下逆さま検知（電源ボタン誤押し回避）
         let gravity = motion.gravity
         let isFlat = (gravity.z < -0.70) && (abs(gravity.x) < 0.40) && (abs(gravity.y) < 0.45)
         let isQuiet = self.swingIntensity < 0.8
+        
+        self.isUpsideDown = gravity.y > 0.35 // 上下逆に持っている場合
         
         if isFlat && isQuiet {
             horizontalStabilizeCounter += 1
@@ -128,39 +132,51 @@ public final class MotionDetector: ObservableObject {
         self.currentAngleDegrees = currentTheta * (180.0 / .pi)
         
         // 3. 折り返し（ゼロクロス）の検出
-        // gyroが正負を跨いだ瞬間 ＝ スイングの端で停止した瞬間
         if (lastGyroZ <= 0.05 && gyro > 0.05) || (lastGyroZ >= -0.05 && gyro < -0.05) {
             handleTurnaround(isMovingPositive: gyro > 0, turnaroundTheta: currentTheta, now: now)
         }
         
-        // 4. 【両方向（往路・復路）完全同期発光 ＆ 最高速中間域制御】
-        // 左右に振って空間の同じ位置に残像が重なることで、光量と点滅頻度が2倍になり、
-        // 網膜上で文字が途切れずに力強く継続して結像します。
+        // 4. 【往路・復路ごとの正確な進行度算出 ＆ 最高速中間域制御】
         let width = max(learnedStrokeWidth * strokeSensitivity, 0.8)
-        let relativeAngle = currentTheta - leftTurnAngle
-        let rawProgress = relativeAngle / width
         
-        if gyro > 0.3 {
+        if gyro > 0.4 {
+            // 往路（左から右へのスイング）: swingStartTheta(左端)からの進行
             self.currentPhase = .forward
-        } else if gyro < -0.3 {
+            let strokeDelta = max(currentTheta - swingStartTheta, 0.0)
+            let rawProgress = strokeDelta / width
+            
+            let isSpeedSufficient = gyro > 0.8
+            let isInWindow = rawProgress >= windowStartRatio && rawProgress <= windowEndRatio
+            
+            if isSpeedSufficient && isInWindow {
+                self.isEmitting = true
+                let mapped = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
+                self.strokeProgress = min(max(mapped, 0.0), 1.0)
+            } else {
+                self.isEmitting = false
+                self.strokeProgress = 0.0
+            }
+            
+        } else if gyro < -0.4 {
+            // 復路（右から左へのスイング）: swingStartTheta(右端)からの進行
             self.currentPhase = .backward
-        }
-        
-        // 最高速中間ゾーン判定:
-        // 端部（開始15%と終了15%）は減速域のため消灯し、速度が乗る中央域で、かつ |gyro| > 1.0 rad/s のとき
-        // 往路でも復路でも正確に発光！
-        let isSpeedSufficient = abs(gyro) > 1.0
-        let isInActiveWindow = rawProgress >= windowStartRatio && rawProgress <= windowEndRatio
-        
-        if isSpeedSufficient && isInActiveWindow {
-            self.isEmitting = true
-            // 空間位置 [0.0 ... 1.0] にダイレクト連動
-            // 往路は 0.0 -> 1.0、復路は 1.0 -> 0.0 と自動的に逆走するため、
-            // 空間上の同じ絶対座標で全く同じスライス列が発光する！
-            let mappedProgress = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
-            self.strokeProgress = min(max(mappedProgress, 0.0), 1.0)
+            let strokeDelta = max(swingStartTheta - currentTheta, 0.0)
+            let rawProgress = strokeDelta / width
+            
+            let isSpeedSufficient = abs(gyro) > 0.8
+            let isInWindow = rawProgress >= windowStartRatio && rawProgress <= windowEndRatio
+            
+            if isSpeedSufficient && isInWindow {
+                self.isEmitting = true
+                let mapped = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
+                self.strokeProgress = min(max(mapped, 0.0), 1.0)
+            } else {
+                self.isEmitting = false
+                self.strokeProgress = 0.0
+            }
+            
         } else {
-            // 端部減速域、または低速時は完全消灯
+            // 停止・減速域
             self.isEmitting = false
             self.strokeProgress = 0.0
         }
@@ -175,16 +191,18 @@ public final class MotionDetector: ObservableObject {
         lastTurnTime = now
         
         if isMovingPositive {
-            // 「右→左」から「左→右」への切り返し（左端に到達！）
+            // 「右→左」から「左→右」への切り返し（左端に到達！往路スタート）
             leftTurnAngle = turnaroundTheta
+            swingStartTheta = turnaroundTheta
             let width = abs(rightTurnAngle - leftTurnAngle)
             if width > 0.7 && width < 2.5 {
                 learnedStrokeWidth = learnedStrokeWidth * 0.7 + width * 0.3
                 strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
             }
         } else {
-            // 「左→右」から「右→左」への切り返し（右端に到達！）
+            // 「左→右」から「右→左」への切り返し（右端に到達！復路スタート）
             rightTurnAngle = turnaroundTheta
+            swingStartTheta = turnaroundTheta
             let width = abs(rightTurnAngle - leftTurnAngle)
             if width > 0.7 && width < 2.5 {
                 learnedStrokeWidth = learnedStrokeWidth * 0.7 + width * 0.3

@@ -80,7 +80,21 @@ public final class POVCanvasView: UIView {
         
         let count = slices.count
         let progress = detector.strokeProgress
-        let targetIndex = min(Int(progress * Double(count)), count - 1)
+        
+        // 往路・復路で空間上の同じ絶対位置に同じ文字スライスを発光させる
+        // 往路（左から右へのスイング）:
+        //   左端 (progress 0.0) -> 文字の左端 (index 0)
+        //   右端 (progress 1.0) -> 文字の右端 (index count - 1)
+        // 復路（右から左へのスイング）:
+        //   右端 (progress 0.0) -> 文字の右端 (index count - 1)
+        //   左端 (progress 1.0) -> 文字の左端 (index 0)
+        // これにより、往復両方で空間の全く同じ位置・全く同じ向きで完全に一致する（「E」が「ヨ」にならない）
+        let targetIndex: Int
+        if detector.currentPhase == .forward {
+            targetIndex = min(Int(progress * Double(count)), count - 1)
+        } else {
+            targetIndex = min(Int((1.0 - progress) * Double(count)), count - 1)
+        }
         
         if targetIndex != currentSliceIndex {
             currentSliceIndex = targetIndex
@@ -104,11 +118,22 @@ public final class POVCanvasView: UIView {
         guard dotCount > 0 else { return }
         
         ctx.setFillColor(slitColor.cgColor)
-        
         ctx.saveGState()
         
+        let detector = MotionDetector.shared
+        let isUpsideDown = detector.isUpsideDown
+        
+        // 【電源ボタン誤押し回避: 上下逆さま持ち自動対応】
+        // iPhoneを上下逆さま（充電口を上）にして左右をがっしり握った場合、
+        // 描画を180度回転させて空中の文字を正立させる
+        if isUpsideDown {
+            ctx.translateBy(x: rect.midX, y: rect.midY)
+            ctx.rotate(by: .pi)
+            ctx.translateBy(x: -rect.midX, y: -rect.midY)
+        }
+        
         if isDiagonal {
-            // 【対角線特大文字モード】
+            // 【対角線特大文字モード（改良版）】
             // 画面中心を原点に対角線の角度に回転させ、対角線全長（約950pt）を使って文字を巨大描画！
             let diagLength = hypot(rect.width, rect.height)
             let angle = atan2(rect.width, rect.height) // 約24度
@@ -133,14 +158,14 @@ public final class POVCanvasView: UIView {
             }
             
         } else {
-            // 【通常垂直スリットモード】
+            // 【通常垂直スリットモード（左右がっしり抑え持ち最適化・超巨大縦スケール）】
             switch direction {
             case .horizontal:
-                // 横振りの場合: 画面中央に高光量LED縦スリットを描画
+                // 横振りの場合: 画面中央に高光量LED縦スリットを描画（画面の上端から下端まで100%フル活用）
                 let actualWidth = max(slitWidth, 8.0)
                 let startX = (rect.width - actualWidth) / 2.0
                 let dotHeight = rect.height / CGFloat(dotCount)
-                let activeDotH = dotHeight * activeDotRatio // 隙間を確保してEの文字潰れを防止
+                let activeDotH = dotHeight * activeDotRatio // 隙間を確保してEの文字潰れを完全に防止
                 
                 for (idx, isOn) in slice.enumerated() {
                     if isOn {

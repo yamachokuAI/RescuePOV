@@ -2,19 +2,19 @@ import SwiftUI
 
 /// POV発光パターンプリセット
 public enum POVPattern: String, CaseIterable, Identifiable {
-    case balanced = "バランス(推奨)"
-    case diagonalGiant = "対角線 特大"
-    case superBright = "超爆光"
-    case sharp = "精細シャープ"
+    case sharpWide = "精細極太(推奨)"    // 実機テストで最も見やすかった黄金比（幅44px・隙間保証）
+    case diagonalGiant = "対角線 特大"   // 画面対角線全長を活用
+    case superBright = "超爆光"         // 遠距離・悪天候用最大光束
+    case ultraSharp = "超精細シャープ"   // 至近距離・輪郭確認用
     
     public var id: String { rawValue }
     
     public var defaultSlitWidth: CGFloat {
         switch self {
-        case .balanced: return 32.0
-        case .diagonalGiant: return 38.0
-        case .superBright: return 55.0
-        case .sharp: return 20.0
+        case .sharpWide: return 44.0
+        case .diagonalGiant: return 42.0
+        case .superBright: return 56.0
+        case .ultraSharp: return 24.0
         }
     }
     
@@ -24,19 +24,19 @@ public enum POVPattern: String, CaseIterable, Identifiable {
     
     public var activeDotRatio: CGFloat {
         switch self {
-        case .balanced: return 0.82
+        case .sharpWide: return 0.80 // 隙間20%確保で太スリットでもE文字の横棒がくっきり黒抜け！
         case .diagonalGiant: return 0.82
-        case .superBright: return 0.78
-        case .sharp: return 0.86
+        case .superBright: return 0.76
+        case .ultraSharp: return 0.86
         }
     }
     
     public var description: String {
         switch self {
-        case .balanced: return "光量と文字のシャープさの最適バランス"
+        case .sharpWide: return "実機検証ベスト！左右抑え持ち最適化＆最大光量"
         case .diagonalGiant: return "画面対角線をフル活用して文字高さを最大化"
         case .superBright: return "遠距離・悪天候用の最大光束モデル"
-        case .sharp: return "EやPの隙間を確実に判別する精細モデル"
+        case .ultraSharp: return "EやPの隙間を精密に判別するモデル"
         }
     }
 }
@@ -58,11 +58,11 @@ public struct POVFullscreenView: View {
     @State private var showInitialGuide: Bool = true
     @State private var isTestFlash: Bool = false
     
-    // 表示パラメータ（パターン連動）
-    @State private var selectedPattern: POVPattern = .balanced
-    @State private var slitWidth: CGFloat = 32.0
+    // 表示パラメータ（パターン連動: 実機ベストの精細極太44pxをデフォルト設定）
+    @State private var selectedPattern: POVPattern = .sharpWide
+    @State private var slitWidth: CGFloat = 44.0
     @State private var isDiagonal: Bool = false
-    @State private var activeDotRatio: CGFloat = 0.82
+    @State private var activeDotRatio: CGFloat = 0.80
     @State private var manualShowControls: Bool = false
     
     /// 水平時、またはタップ時にのみコントロールUIを表示
@@ -261,6 +261,37 @@ public struct POVFullscreenView: View {
                     
                     Divider().background(Color.white.opacity(0.15))
                     
+                    // 【電源ボタン誤押し対策カード】
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: motionDetector.isUpsideDown ? "arrow.up.and.down.circle.fill" : "hand.raised.slash.fill")
+                            .foregroundColor(motionDetector.isUpsideDown ? .green : .orange)
+                            .font(.title3)
+                        
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text("電源ボタン誤押し対策（実機セーフティ）")
+                                    .font(.caption.bold())
+                                    .foregroundColor(.white)
+                                Spacer()
+                                if motionDetector.isUpsideDown {
+                                    Text("上下逆さま検知中 (180°自動正立)")
+                                        .font(.system(size: 9).bold())
+                                        .foregroundColor(.green)
+                                }
+                            }
+                            
+                            Text("① iPhoneを【上下逆さま】（充電口を上）にして左右を握ると、サイドボタンに触れずに安全に振れます。（自動180度反転対応）\n② 設定 > アクセシビリティ >「アクセスガイド」をトリプルクリックで開始すると、サイドボタンをOSレベルで完全無効化できます。")
+                                .font(.system(size: 9.5))
+                                .foregroundColor(.white.opacity(0.85))
+                                .lineSpacing(2)
+                        }
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.15)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.35), lineWidth: 1))
+                    
+                    Divider().background(Color.white.opacity(0.15))
+                    
                     // リアルタイムステータス
                     HStack {
                         Circle()
@@ -291,6 +322,8 @@ public struct POVFullscreenView: View {
             .animation(.easeInOut(duration: 0.22), value: isControlsVisible)
         }
         .contentShape(Rectangle())
+        // 頭上に掲げてスイングしている間は画面タッチを完全無効化（がっしり握った時の誤タッチ防止）
+        .allowsHitTesting(isControlsVisible || showInitialGuide)
         .onTapGesture {
             if showInitialGuide {
                 withAnimation { showInitialGuide = false }
