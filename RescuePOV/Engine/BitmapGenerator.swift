@@ -118,20 +118,15 @@ public final class BitmapGenerator {
         }
         
         // 縦方向の解像度（7ドット ➔ sliceResolution ドット）へスケールアップ
+        // 画面の上下端まで文字を最大化（上下マージン0）し、文字サイズを限界まで大きくする
         var resultSlices: [[Bool]] = []
         for col in rawCols {
             var scaledCol: [Bool] = []
             for y in 0..<sliceResolution {
-                // 画面の縦中央に文字を配置（上下に余白）
-                let marginY = 3
-                let activeHeight = sliceResolution - marginY * 2
-                if y >= marginY && y < (marginY + activeHeight) {
-                    let srcY = Int(Double(y - marginY) / Double(activeHeight) * 7.0)
-                    let clampedSrcY = min(max(srcY, 0), 6)
-                    scaledCol.append(col[clampedSrcY])
-                } else {
-                    scaledCol.append(false)
-                }
+                // 画面の縦（または対角線）を100%フルに使って文字高さを最大化
+                let srcY = Int(Double(y) / Double(sliceResolution) * 7.0)
+                let clampedSrcY = min(max(srcY, 0), 6)
+                scaledCol.append(col[clampedSrcY])
             }
             resultSlices.append(scaledCol)
         }

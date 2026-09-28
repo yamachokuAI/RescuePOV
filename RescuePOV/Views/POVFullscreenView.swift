@@ -1,10 +1,52 @@
 import SwiftUI
 
+/// POV発光パターンプリセット
+public enum POVPattern: String, CaseIterable, Identifiable {
+    case balanced = "バランス(推奨)"
+    case diagonalGiant = "対角線 特大"
+    case superBright = "超爆光"
+    case sharp = "精細シャープ"
+    
+    public var id: String { rawValue }
+    
+    public var defaultSlitWidth: CGFloat {
+        switch self {
+        case .balanced: return 32.0
+        case .diagonalGiant: return 38.0
+        case .superBright: return 55.0
+        case .sharp: return 20.0
+        }
+    }
+    
+    public var isDiagonal: Bool {
+        return self == .diagonalGiant
+    }
+    
+    public var activeDotRatio: CGFloat {
+        switch self {
+        case .balanced: return 0.82
+        case .diagonalGiant: return 0.82
+        case .superBright: return 0.78
+        case .sharp: return 0.86
+        }
+    }
+    
+    public var description: String {
+        switch self {
+        case .balanced: return "光量と文字のシャープさの最適バランス"
+        case .diagonalGiant: return "画面対角線をフル活用して文字高さを最大化"
+        case .superBright: return "遠距離・悪天候用の最大光束モデル"
+        case .sharp: return "EやPの隙間を確実に判別する精細モデル"
+        }
+    }
+}
+
 /// フルスクリーンPOV空中文字表示画面
 public struct POVFullscreenView: View {
     @Environment(\.dismiss) private var dismiss
+    public var onDismiss: (() -> Void)? = nil
     
-    let text: String
+    @State private var currentText: String
     let direction: POVDirection
     let color: POVColor
     let mirrorForViewer: Bool
@@ -15,7 +57,12 @@ public struct POVFullscreenView: View {
     @State private var slices: [[Bool]] = []
     @State private var showInitialGuide: Bool = true
     @State private var isTestFlash: Bool = false
-    @State private var slitWidth: CGFloat = 45.0 // デフォルト45px（高光量スリット）
+    
+    // 表示パラメータ（パターン連動）
+    @State private var selectedPattern: POVPattern = .balanced
+    @State private var slitWidth: CGFloat = 32.0
+    @State private var isDiagonal: Bool = false
+    @State private var activeDotRatio: CGFloat = 0.82
     @State private var manualShowControls: Bool = false
     
     /// 水平時、またはタップ時にのみコントロールUIを表示
@@ -24,15 +71,17 @@ public struct POVFullscreenView: View {
     }
     
     public init(
-        text: String,
-        direction: POVDirection,
-        color: POVColor,
-        mirrorForViewer: Bool = true
+        text: String = "HELP",
+        direction: POVDirection = .horizontal,
+        color: POVColor = .white,
+        mirrorForViewer: Bool = true,
+        onDismiss: (() -> Void)? = nil
     ) {
-        self.text = text
+        self._currentText = State(initialValue: text)
         self.direction = direction
         self.color = color
         self.mirrorForViewer = mirrorForViewer
+        self.onDismiss = onDismiss
     }
     
     public var body: some View {
@@ -40,12 +89,14 @@ public struct POVFullscreenView: View {
             // 背景黒（完全な漆黒）
             Color.black.ignoresSafeArea()
             
-            // CADisplayLink＋位置同期による高光量スリット残像キャンバス
+            // CADisplayLink＋位置同期による高光量スリット残像キャンバス（往復両方向同期）
             POVCanvasRepresentable(
                 slices: slices,
                 direction: direction,
                 color: isTestFlash ? UIColor.white : color.uiColor,
-                slitWidth: slitWidth
+                slitWidth: slitWidth,
+                isDiagonal: isDiagonal,
+                activeDotRatio: activeDotRatio
             )
             .ignoresSafeArea()
             
@@ -56,12 +107,12 @@ public struct POVFullscreenView: View {
             
             // 突入時の初期ガイド（振りを検知するかタップで即消去）
             if showInitialGuide && !motionDetector.isMotionActive {
-                VStack(spacing: 16) {
+                VStack(spacing: 14) {
                     Image(systemName: direction.iconName)
-                        .font(.system(size: 64, weight: .bold))
+                        .font(.system(size: 60, weight: .bold))
                         .foregroundColor(.yellow)
                     
-                    Text("【救難POVモード準備完了】")
+                    Text("【救難POVスタンバイ完了】")
                         .font(.title2.bold())
                         .foregroundColor(.white)
                     
@@ -69,9 +120,9 @@ public struct POVFullscreenView: View {
                         .font(.headline)
                         .multilineTextAlignment(.center)
                         .foregroundColor(.white)
-                        .padding(.horizontal, 24)
+                        .padding(.horizontal, 20)
                     
-                    Text("表示文字: 「\(text)」")
+                    Text("表示文字: 「\(currentText)」")
                         .font(.title3.bold())
                         .foregroundColor(.red)
                         .padding(.horizontal, 16)
@@ -84,13 +135,13 @@ public struct POVFullscreenView: View {
                         .foregroundColor(.gray)
                         .padding(.horizontal)
                 }
-                .padding(26)
-                .background(RoundedRectangle(cornerRadius: 20).fill(Color.black.opacity(0.9)))
+                .padding(24)
+                .background(RoundedRectangle(cornerRadius: 20).fill(Color.black.opacity(0.92)))
                 .overlay(
                     RoundedRectangle(cornerRadius: 20)
                         .stroke(Color.yellow.opacity(0.6), lineWidth: 2)
                 )
-                .padding(.horizontal, 30)
+                .padding(.horizontal, 24)
                 .transition(.opacity.combined(with: .scale))
             }
             
@@ -99,19 +150,40 @@ public struct POVFullscreenView: View {
             // 手元で水平にした時だけフワッと再表示
             VStack {
                 // 上部バー
-                HStack {
+                HStack(spacing: 10) {
                     Button(action: {
-                        dismiss()
+                        if let onDismiss = onDismiss {
+                            onDismiss()
+                        } else {
+                            dismiss()
+                        }
                     }) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 4) {
                             Image(systemName: "xmark.circle.fill")
                             Text("戻る")
                         }
-                        .font(.subheadline.bold())
-                        .padding(.horizontal, 14)
+                        .font(.caption.bold())
+                        .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Capsule().fill(Color(white: 0.25, opacity: 0.85)))
                         .foregroundColor(.white)
+                    }
+                    
+                    // 文字クイック切替（ワンタップで即変更）
+                    HStack(spacing: 6) {
+                        ForEach(["HELP", "SOS", "OK"], id: \.self) { word in
+                            Button(action: {
+                                currentText = word
+                                rebuildSlices()
+                            }) {
+                                Text(word)
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 6)
+                                    .background(Capsule().fill(currentText == word ? Color.red : Color(white: 0.2)))
+                                    .foregroundColor(.white)
+                            }
+                        }
                     }
                     
                     Spacer()
@@ -125,7 +197,7 @@ public struct POVFullscreenView: View {
                             Text("テスト点灯")
                         }
                         .font(.caption.bold())
-                        .padding(.horizontal, 12)
+                        .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                         .background(Capsule().fill(Color.orange.opacity(0.85)))
                         .foregroundColor(.black)
@@ -136,71 +208,84 @@ public struct POVFullscreenView: View {
                 
                 Spacer()
                 
-                // 水平時に現れる光量・スリット調整パネル
+                // 水平時に現れるコントロールパネル
                 VStack(spacing: 12) {
+                    // パターン選択セグメント
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("表示パターン（4種類）")
+                                .font(.caption.bold())
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(selectedPattern.description)
+                                .font(.caption2)
+                                .foregroundColor(.yellow)
+                        }
+                        
+                        Picker("パターン", selection: $selectedPattern) {
+                            ForEach(POVPattern.allCases) { pat in
+                                Text(pat.rawValue).tag(pat)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .onChange(of: selectedPattern) { newPattern in
+                            applyPattern(newPattern)
+                        }
+                    }
+                    
+                    Divider().background(Color.white.opacity(0.15))
+                    
+                    // スリット幅微調整
                     HStack {
                         Image(systemName: "sun.max.fill")
                             .foregroundColor(.yellow)
-                        Text("スリット幅・光量調整")
-                            .font(.subheadline.bold())
+                        Text("スリット幅・光量微調整")
+                            .font(.caption.bold())
                             .foregroundColor(.white)
                         Spacer()
                         Text(String(format: "%.0f px", slitWidth))
-                            .font(.subheadline.monospacedDigit().bold())
+                            .font(.caption.monospacedDigit().bold())
                             .foregroundColor(.yellow)
                     }
                     
-                    HStack(spacing: 12) {
-                        Text("細部重視\n(15px)")
-                            .font(.system(size: 9))
-                            .foregroundColor(.gray)
-                            .multilineTextAlignment(.center)
-                        
-                        Slider(value: $slitWidth, in: 10...120, step: 5)
-                            .tint(.yellow)
-                        
-                        Text("超爆光\n(120px)")
-                            .font(.system(size: 9))
-                            .foregroundColor(.yellow)
-                            .multilineTextAlignment(.center)
-                    }
+                    Slider(value: $slitWidth, in: 12...120, step: 2)
+                        .tint(.yellow)
                     
                     HStack(spacing: 8) {
-                        Image(systemName: "iphone.radiowaves.left.and.right")
-                            .foregroundColor(.green)
-                        Text("携帯を立てて頭上で振ると全ボタンが自動消灯します（残像妨害防止）")
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.8))
+                        Image(systemName: "arrow.left.arrow.right")
+                            .foregroundColor(.cyan)
+                        Text("左右両方向（往路・復路）完全同期発光中 ｜ 掲げると全UI自動消灯")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.85))
                     }
-                    .padding(.top, 2)
                     
-                    Divider().background(Color.white.opacity(0.2))
+                    Divider().background(Color.white.opacity(0.15))
                     
-                    // ステータス表示
+                    // リアルタイムステータス
                     HStack {
                         Circle()
                             .fill(motionDetector.isEmitting ? Color.green : Color.gray)
                             .frame(width: 8, height: 8)
                         
-                        Text(motionDetector.isEmitting ? "高速中央ゾーン発光中" : "端部減速域・消灯中")
+                        Text(motionDetector.isEmitting ? "往復同期発光中" : "端部減速・消灯中")
                             .font(.caption2.bold())
                             .foregroundColor(.white.opacity(0.9))
                         
                         Spacer()
                         
-                        Text(String(format: "位置: %.0f%% (振れ幅: %.0f°)", motionDetector.strokeProgress * 100.0, motionDetector.strokeAngleRange))
+                        Text(String(format: "位置: %.0f%% (振れ幅: %.0f° / 速度: %.1f)", motionDetector.strokeProgress * 100.0, motionDetector.strokeAngleRange, motionDetector.swingIntensity))
                             .font(.caption2.monospacedDigit())
                             .foregroundColor(.green)
                     }
                 }
-                .padding(16)
-                .background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.12, opacity: 0.92)))
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.12, opacity: 0.94)))
                 .overlay(
                     RoundedRectangle(cornerRadius: 18)
-                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 20)
             }
             .opacity(isControlsVisible ? 1.0 : 0.0)
             .animation(.easeInOut(duration: 0.22), value: isControlsVisible)
@@ -210,7 +295,6 @@ public struct POVFullscreenView: View {
             if showInitialGuide {
                 withAnimation { showInitialGuide = false }
             } else {
-                // 水平時以外でも、タップで手動トグル可能（非常時安全策）
                 withAnimation(.easeInOut(duration: 0.2)) {
                     manualShowControls.toggle()
                 }
@@ -219,20 +303,13 @@ public struct POVFullscreenView: View {
         .statusBar(hidden: true)
         .onAppear {
             previousBrightness = UIScreen.main.brightness
-            UIScreen.main.brightness = 1.0
+            UIScreen.main.brightness = 1.0 // 常に最大光量
             UIApplication.shared.isIdleTimerDisabled = true
             
-            // 5x7高密度ドットフォントによるスライスマトリクス生成
-            self.slices = BitmapGenerator.shared.generateSlices(
-                text: text,
-                direction: direction,
-                targetSlices: 36,
-                sliceResolution: 24,
-                mirrorForViewer: mirrorForViewer
-            )
+            applyPattern(selectedPattern)
+            rebuildSlices()
             motionDetector.start(direction: direction)
             
-            // 1.8秒後にガイドを自動フェードアウト
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
                 withAnimation(.easeOut(duration: 0.3)) {
                     self.showInitialGuide = false
@@ -244,6 +321,22 @@ public struct POVFullscreenView: View {
             UIApplication.shared.isIdleTimerDisabled = false
             motionDetector.stop()
         }
+    }
+    
+    private func applyPattern(_ pattern: POVPattern) {
+        self.slitWidth = pattern.defaultSlitWidth
+        self.isDiagonal = pattern.isDiagonal
+        self.activeDotRatio = pattern.activeDotRatio
+    }
+    
+    private func rebuildSlices() {
+        self.slices = BitmapGenerator.shared.generateSlices(
+            text: currentText,
+            direction: direction,
+            targetSlices: 36,
+            sliceResolution: 28, // 7分割等幅マッピング（Eの横線間隙間を2倍確保）
+            mirrorForViewer: mirrorForViewer
+        )
     }
     
     private func flashScreen() {

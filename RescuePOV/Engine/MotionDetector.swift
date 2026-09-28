@@ -133,34 +133,36 @@ public final class MotionDetector: ObservableObject {
             handleTurnaround(isMovingPositive: gyro > 0, turnaroundTheta: currentTheta, now: now)
         }
         
-        // 4. 【速度の上がる中間域だけで表示】
-        // 端部（折り返し付近）は減速して滞留するため完全消灯し、
-        // スイング速度が十分速く（gyro > 1.2 rad/s）、ストロークの中央ゾーンにいる時のみ発光
-        if gyro > 0.8 {
+        // 4. 【両方向（往路・復路）完全同期発光 ＆ 最高速中間域制御】
+        // 左右に振って空間の同じ位置に残像が重なることで、光量と点滅頻度が2倍になり、
+        // 網膜上で文字が途切れずに力強く継続して結像します。
+        let width = max(learnedStrokeWidth * strokeSensitivity, 0.8)
+        let relativeAngle = currentTheta - leftTurnAngle
+        let rawProgress = relativeAngle / width
+        
+        if gyro > 0.3 {
             self.currentPhase = .forward
-            
-            let width = max(learnedStrokeWidth * strokeSensitivity, 0.8)
-            let relativeAngle = currentTheta - leftTurnAngle
-            let rawProgress = relativeAngle / width
-            
-            // 最高速中間ゾーン判定
-            if rawProgress >= windowStartRatio && rawProgress <= windowEndRatio && gyro > 1.2 {
-                self.isEmitting = true
-                let mappedProgress = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
-                self.strokeProgress = min(max(mappedProgress, 0.0), 1.0)
-            } else {
-                // 端部の減速域は消灯
-                self.isEmitting = false
-                self.strokeProgress = 0.0
-            }
-            
+        } else if gyro < -0.3 {
+            self.currentPhase = .backward
+        }
+        
+        // 最高速中間ゾーン判定:
+        // 端部（開始15%と終了15%）は減速域のため消灯し、速度が乗る中央域で、かつ |gyro| > 1.0 rad/s のとき
+        // 往路でも復路でも正確に発光！
+        let isSpeedSufficient = abs(gyro) > 1.0
+        let isInActiveWindow = rawProgress >= windowStartRatio && rawProgress <= windowEndRatio
+        
+        if isSpeedSufficient && isInActiveWindow {
+            self.isEmitting = true
+            // 空間位置 [0.0 ... 1.0] にダイレクト連動
+            // 往路は 0.0 -> 1.0、復路は 1.0 -> 0.0 と自動的に逆走するため、
+            // 空間上の同じ絶対座標で全く同じスライス列が発光する！
+            let mappedProgress = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
+            self.strokeProgress = min(max(mappedProgress, 0.0), 1.0)
         } else {
-            // 復路および静止・低速域は完全消灯
+            // 端部減速域、または低速時は完全消灯
             self.isEmitting = false
             self.strokeProgress = 0.0
-            if gyro < -0.5 {
-                self.currentPhase = .backward
-            }
         }
         
         lastGyroZ = gyro
@@ -202,21 +204,16 @@ public final class MotionDetector: ObservableObject {
             let s = sin(self.simulationPhase)
             let c = cos(self.simulationPhase)
             
-            // 往路かつ中央域のみ発光
-            if c > 0 {
-                self.currentPhase = .forward
-                let rawProgress = (s + 1.0) / 2.0
-                if rawProgress >= self.windowStartRatio && rawProgress <= self.windowEndRatio {
-                    self.isEmitting = true
-                    let mapped = (rawProgress - self.windowStartRatio) / (self.windowEndRatio - self.windowStartRatio)
-                    self.strokeProgress = min(max(mapped, 0.0), 1.0)
-                } else {
-                    self.isEmitting = false
-                    self.strokeProgress = 0.0
-                }
+            // 往復の進行度
+            let rawProgress = (s + 1.0) / 2.0
+            self.currentPhase = c > 0 ? .forward : .backward
+            
+            // 往路も復路も中央域で同期発光
+            if rawProgress >= self.windowStartRatio && rawProgress <= self.windowEndRatio && abs(c) > 0.3 {
+                self.isEmitting = true
+                let mapped = (rawProgress - self.windowStartRatio) / (self.windowEndRatio - self.windowStartRatio)
+                self.strokeProgress = min(max(mapped, 0.0), 1.0)
             } else {
-                // 復路
-                self.currentPhase = .backward
                 self.isEmitting = false
                 self.strokeProgress = 0.0
             }
