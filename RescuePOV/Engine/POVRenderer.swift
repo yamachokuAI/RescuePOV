@@ -29,7 +29,7 @@ public final class POVCanvasView: UIView {
     public var slices: [[Bool]] = []
     public var direction: POVDirection = .horizontal
     public var slitColor: UIColor = .white
-    public var slitWidthRatio: CGFloat = 0.22 // スリット幅比率（残像がクリアに見える最適比率）
+    public var slitWidth: CGFloat = 45.0 // デフォルト45px（高光量スリット、調整可能）
     
     private var displayLink: CADisplayLink?
     private var currentSliceIndex: Int = -1
@@ -50,7 +50,8 @@ public final class POVCanvasView: UIView {
         stopRendering()
         let link = CADisplayLink(target: self, selector: #selector(renderFrame))
         if #available(iOS 15.0, *) {
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            // 120Hz ProMotion ディスプレイを最大限活用
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 120, maximum: 120, preferred: 120)
         }
         link.add(to: .main, forMode: .common)
         self.displayLink = link
@@ -66,8 +67,8 @@ public final class POVCanvasView: UIView {
     @objc private func renderFrame() {
         let detector = MotionDetector.shared
         
-        // 往路（forward）中はスライスカラムを表示、復路（backward）は消灯
-        guard detector.currentPhase == .forward, !slices.isEmpty else {
+        // 往路の最高速中間域（isEmitting == true）のみ発光、それ以外（端部減速域・復路）は完全消灯
+        guard detector.isEmitting, !slices.isEmpty else {
             if currentSliceIndex != -1 {
                 currentSliceIndex = -1
                 setNeedsDisplay()
@@ -88,7 +89,7 @@ public final class POVCanvasView: UIView {
     public override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
         
-        // 背景黒
+        // 背景は完全な漆黒
         ctx.setFillColor(UIColor.black.cgColor)
         ctx.fill(rect)
         
@@ -104,34 +105,34 @@ public final class POVCanvasView: UIView {
         
         switch direction {
         case .horizontal:
-            // 横振りの場合: 画面中央に極細のLED縦スリットを描画（白残像防止）
-            let slitWidth: CGFloat = 6.0
-            let startX = (rect.width - slitWidth) / 2.0
+            // 横振りの場合: 画面中央に高光量LED縦スリットを描画
+            let actualWidth = max(slitWidth, 8.0)
+            let startX = (rect.width - actualWidth) / 2.0
             let dotHeight = rect.height / CGFloat(dotCount)
-            let activeDotH = dotHeight * 0.75 // 上下に隙間を空けてLEDの粒感を出す
+            let activeDotH = dotHeight * 0.92 // 縦の発光面積を92%にして光量を最大化
             
             for (idx, isOn) in slice.enumerated() {
                 if isOn {
                     let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
-                    let dotRect = CGRect(x: startX, y: y, width: slitWidth, height: activeDotH)
-                    let path = UIBezierPath(roundedRect: dotRect, cornerRadius: 2.0)
+                    let dotRect = CGRect(x: startX, y: y, width: actualWidth, height: activeDotH)
+                    let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(actualWidth * 0.15, 6.0))
                     ctx.addPath(path.cgPath)
                     ctx.fillPath()
                 }
             }
             
         case .vertical:
-            // 縦振りの場合: 画面中央に極細のLED横スリットを描画
-            let slitHeight: CGFloat = 6.0
-            let startY = (rect.height - slitHeight) / 2.0
+            // 縦振りの場合: 画面中央に高光量LED横スリットを描画
+            let actualHeight = max(slitWidth, 8.0)
+            let startY = (rect.height - actualHeight) / 2.0
             let dotWidth = rect.width / CGFloat(dotCount)
-            let activeDotW = dotWidth * 0.75
+            let activeDotW = dotWidth * 0.92
             
             for (idx, isOn) in slice.enumerated() {
                 if isOn {
                     let x = CGFloat(idx) * dotWidth + (dotWidth - activeDotW) / 2.0
-                    let dotRect = CGRect(x: x, y: startY, width: activeDotW, height: slitHeight)
-                    let path = UIBezierPath(roundedRect: dotRect, cornerRadius: 2.0)
+                    let dotRect = CGRect(x: x, y: startY, width: activeDotW, height: actualHeight)
+                    let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(actualHeight * 0.15, 6.0))
                     ctx.addPath(path.cgPath)
                     ctx.fillPath()
                 }
@@ -149,11 +150,18 @@ public struct POVCanvasRepresentable: UIViewRepresentable {
     public let slices: [[Bool]]
     public let direction: POVDirection
     public let color: UIColor
+    public let slitWidth: CGFloat
     
-    public init(slices: [[Bool]], direction: POVDirection, color: UIColor) {
+    public init(
+        slices: [[Bool]],
+        direction: POVDirection,
+        color: UIColor,
+        slitWidth: CGFloat = 45.0
+    ) {
         self.slices = slices
         self.direction = direction
         self.color = color
+        self.slitWidth = slitWidth
     }
     
     public func makeUIView(context: Context) -> POVCanvasView {
@@ -161,6 +169,7 @@ public struct POVCanvasRepresentable: UIViewRepresentable {
         view.slices = slices
         view.direction = direction
         view.slitColor = color
+        view.slitWidth = slitWidth
         view.startRendering()
         return view
     }
@@ -169,5 +178,8 @@ public struct POVCanvasRepresentable: UIViewRepresentable {
         uiView.slices = slices
         uiView.direction = direction
         uiView.slitColor = color
+        if uiView.slitWidth != slitWidth {
+            uiView.slitWidth = slitWidth
+        }
     }
 }

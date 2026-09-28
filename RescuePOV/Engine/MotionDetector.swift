@@ -18,6 +18,8 @@ public final class MotionDetector: ObservableObject {
     
     // 公開プロパティ
     @Published public private(set) var currentPhase: SwingPhase = .forward
+    @Published public private(set) var isEmitting: Bool = false                 // 最高速中間域で文字スリット発光中フラグ
+    @Published public private(set) var isDeviceHorizontal: Bool = false         // 端末が手元で水平に保たれているか（ボタン表示用）
     @Published public private(set) var strokeProgress: Double = 0.0             // 空間位置の進行度 (0.0: 左端 ... 1.0: 右端)
     @Published public private(set) var swingIntensity: Double = 0.0             // 振りの勢い（角速度 rad/s または G）
     @Published public private(set) var currentAngleDegrees: Double = 0.0        // 現在の空間角度（度）
@@ -28,6 +30,10 @@ public final class MotionDetector: ObservableObject {
     @Published public var invertSwingDirection: Bool = false                    // 左右スイング判定の反転
     @Published public var strokeSensitivity: Double = 1.0                       // 振り幅感度調整 (0.7〜1.5)
     
+    // 中間域発光ウィンドウ設定（両端の減速域をカットして最高速ゾーンのみ発光）
+    public var windowStartRatio: Double = 0.18                                 // ストローク開始18%は消灯
+    public var windowEndRatio: Double = 0.82                                   // ストローク終了82%以降は消灯
+    
     // 内部トラッキング用
     private var currentTheta: Double = 0.0
     private var leftTurnAngle: Double = -0.80   // 左端（rad）約 -46度
@@ -37,6 +43,7 @@ public final class MotionDetector: ObservableObject {
     private var lastUpdateTime: Date = Date()
     private var isCalibrated: Bool = false
     private var lastTurnTime: Date = Date()
+    private var horizontalStabilizeCounter: Int = 0
     
     // シミュレーション（センサー未搭載環境）用
     private var simulationTimer: Timer?
@@ -97,34 +104,63 @@ public final class MotionDetector: ObservableObject {
         let gyro = invertSwingDirection ? -rawGyro : rawGyro
         self.swingIntensity = abs(gyro)
         
-        // 角度（空間位置）の台形積分: theta += gyro * dt
+        // 1. 水平検知（頭上掲揚スイング中はUI完全非表示、手元で水平に戻したらUI表示）
+        let gravity = motion.gravity
+        let isFlat = (gravity.z < -0.70) && (abs(gravity.x) < 0.40) && (abs(gravity.y) < 0.45)
+        let isQuiet = self.swingIntensity < 0.8
+        
+        if isFlat && isQuiet {
+            horizontalStabilizeCounter += 1
+            if horizontalStabilizeCounter >= 10 { // 100Hzで約0.1秒維持で確定
+                if !self.isDeviceHorizontal {
+                    self.isDeviceHorizontal = true
+                }
+            }
+        } else {
+            horizontalStabilizeCounter = 0
+            if self.isDeviceHorizontal {
+                self.isDeviceHorizontal = false
+            }
+        }
+        
+        // 2. 角度（空間位置）の台形積分: theta += gyro * dt
         currentTheta += (gyro + lastGyroZ) * 0.5 * dt
         self.currentAngleDegrees = currentTheta * (180.0 / .pi)
         
-        // 折り返し（ゼロクロス）の検出
+        // 3. 折り返し（ゼロクロス）の検出
         // gyroが正負を跨いだ瞬間 ＝ スイングの端で停止した瞬間
         if (lastGyroZ <= 0.05 && gyro > 0.05) || (lastGyroZ >= -0.05 && gyro < -0.05) {
             handleTurnaround(isMovingPositive: gyro > 0, turnaroundTheta: currentTheta, now: now)
         }
         
-        // 【位置に応じた動作】
-        // gyro > 0: 左から右へ移動中（往路） ＝ 画面を空間位置に合わせて発光！
-        // gyro < 0: 右から左へ戻る（復路） ＝ 画面を消灯（残像ブレ防止）
-        if gyro > 0.3 {
+        // 4. 【速度の上がる中間域だけで表示】
+        // 端部（折り返し付近）は減速して滞留するため完全消灯し、
+        // スイング速度が十分速く（gyro > 1.2 rad/s）、ストロークの中央ゾーンにいる時のみ発光
+        if gyro > 0.8 {
             self.currentPhase = .forward
             
-            // 物理空間位置の算出 (0.0: 左端 ... 1.0: 右端)
             let width = max(learnedStrokeWidth * strokeSensitivity, 0.8)
             let relativeAngle = currentTheta - leftTurnAngle
-            let progress = relativeAngle / width
+            let rawProgress = relativeAngle / width
             
-            // 空間位置 [0.0 ... 1.0] にダイレクト連動
-            self.strokeProgress = min(max(progress, 0.0), 1.0)
+            // 最高速中間ゾーン判定
+            if rawProgress >= windowStartRatio && rawProgress <= windowEndRatio && gyro > 1.2 {
+                self.isEmitting = true
+                let mappedProgress = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
+                self.strokeProgress = min(max(mappedProgress, 0.0), 1.0)
+            } else {
+                // 端部の減速域は消灯
+                self.isEmitting = false
+                self.strokeProgress = 0.0
+            }
             
-        } else if gyro < -0.3 {
-            // 復路は消灯
-            self.currentPhase = .backward
+        } else {
+            // 復路および静止・低速域は完全消灯
+            self.isEmitting = false
             self.strokeProgress = 0.0
+            if gyro < -0.5 {
+                self.currentPhase = .backward
+            }
         }
         
         lastGyroZ = gyro
@@ -166,13 +202,22 @@ public final class MotionDetector: ObservableObject {
             let s = sin(self.simulationPhase)
             let c = cos(self.simulationPhase)
             
+            // 往路かつ中央域のみ発光
             if c > 0 {
-                // 往路
                 self.currentPhase = .forward
-                self.strokeProgress = (s + 1.0) / 2.0
+                let rawProgress = (s + 1.0) / 2.0
+                if rawProgress >= self.windowStartRatio && rawProgress <= self.windowEndRatio {
+                    self.isEmitting = true
+                    let mapped = (rawProgress - self.windowStartRatio) / (self.windowEndRatio - self.windowStartRatio)
+                    self.strokeProgress = min(max(mapped, 0.0), 1.0)
+                } else {
+                    self.isEmitting = false
+                    self.strokeProgress = 0.0
+                }
             } else {
                 // 復路
                 self.currentPhase = .backward
+                self.isEmitting = false
                 self.strokeProgress = 0.0
             }
             self.currentAngleDegrees = s * 50.0
