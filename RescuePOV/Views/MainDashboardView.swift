@@ -21,6 +21,30 @@ public struct MainDashboardView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
+                    // 頭上スイング自動検知バナー
+                    HStack(spacing: 10) {
+                        Image(systemName: "bolt.horizontal.fill")
+                            .foregroundColor(.yellow)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("頭上スイング自動検知スタンバイ中")
+                                .font(.caption.bold())
+                                .foregroundColor(.white)
+                            Text("文字を選び、頭の上で携帯を振るとタップ不要で自動スタート！")
+                                .font(.system(size: 10.5))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        Spacer()
+                        Circle()
+                            .fill(motionDetector.isOverheadSwinging ? Color.green : Color.yellow.opacity(0.8))
+                            .frame(width: 8, height: 8)
+                    }
+                    .padding(10)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.12)))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.yellow.opacity(0.4), lineWidth: 1)
+                    )
+                    
                     previewSection
                     mainStartButton
                     samplingSection
@@ -40,6 +64,14 @@ public struct MainDashboardView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Image(systemName: "lifepreserver.fill")
                         .foregroundColor(.red)
+                }
+            }
+            .onAppear {
+                motionDetector.start(direction: selectedDirection)
+            }
+            .onChange(of: motionDetector.isOverheadSwinging) { isSwinging in
+                if isSwinging && !isShowingPOV {
+                    isShowingPOV = true
                 }
             }
         }
@@ -146,12 +178,18 @@ public struct MainDashboardView: View {
                     .stroke(Color.white.opacity(0.3), lineWidth: 1.5)
             )
         }
-        .fullScreenCover(isPresented: $isShowingPOV) {
+        .fullScreenCover(isPresented: $isShowingPOV, onDismiss: {
+            motionDetector.resetOverheadTrigger()
+        }) {
             POVFullscreenView(
                 text: targetText,
                 direction: selectedDirection,
                 color: selectedColor,
-                mirrorForViewer: mirrorForViewer
+                mirrorForViewer: mirrorForViewer,
+                onDismiss: {
+                    isShowingPOV = false
+                    motionDetector.resetOverheadTrigger()
+                }
             )
         }
     }
@@ -161,39 +199,48 @@ public struct MainDashboardView: View {
     private var samplingSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("スイング適応エンジン")
+                Text("スイング・ヒステリシス適応")
                     .font(.headline)
                     .foregroundColor(.white)
                 Spacer()
-                Text("位置同期・白残像防止")
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.green.opacity(0.25)))
-                    .foregroundColor(.green)
+                if motionDetector.isUserCalibrated {
+                    Text("キャリブレーション適用済🟢")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.green.opacity(0.25)))
+                        .foregroundColor(.green)
+                } else {
+                    Text("未校正（標準プロファイル）")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.orange.opacity(0.25)))
+                        .foregroundColor(.orange)
+                }
             }
             
-            Text("角速度リアルタイム積分による位置駆動スリット＋5x7精密ドットフォントにより、左右の振り速度の偏り（ヒステリシス）があっても空間に文字が正確に結像します。")
+            Text("人のスイング特性（往路と復路の筋肉非対称性）を位相空間のヒステリシスループで可視化。光る球の教師データに合わせて振ることで、あなたの動きとiPhoneを完璧に同期させます。")
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .lineSpacing(3)
             
-            // スイング・ヒステリシス計測シートを開くボタン
+            // スイング・ヒステリシス同期トレーニングシートを開くボタン
             Button(action: {
                 isShowingSampling = true
             }) {
                 HStack {
                     Image(systemName: "waveform.path.ecg")
-                    Text("実機スイング・ヒステリシス計測（10往復サンプリング）")
+                    Text("スイング同期トレーニング＆個人キャリブレーション")
                 }
                 .font(.caption.bold())
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(RoundedRectangle(cornerRadius: 10).fill(Color.purple.opacity(0.3)))
-                .foregroundColor(.purple)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.cyan.opacity(0.25)))
+                .foregroundColor(.cyan)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.purple.opacity(0.6), lineWidth: 1)
+                        .stroke(Color.cyan.opacity(0.6), lineWidth: 1)
                 )
             }
             .sheet(isPresented: $isShowingSampling) {

@@ -210,28 +210,17 @@ public struct POVFullscreenView: View {
                 
                 // 水平時に現れるコントロールパネル
                 VStack(spacing: 12) {
-                    // パターン選択セグメント
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("表示パターン（4種類）")
-                                .font(.caption.bold())
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Text(selectedPattern.description)
-                                .font(.caption2)
-                                .foregroundColor(.yellow)
-                        }
-                        
-                        Picker("パターン", selection: $selectedPattern) {
-                            ForEach(POVPattern.allCases) { pat in
-                                Text(pat.rawValue).tag(pat)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .onChange(of: selectedPattern) { newPattern in
-                            applyPattern(newPattern)
-                        }
+                    // 光り方の仕様（実機検証ベスト黄金比に一本化）
+                    HStack {
+                        Image(systemName: "sparkles")
+                            .foregroundColor(.yellow)
+                        Text("光り方: 実機最適化（44px極太・隙間保証・垂直フルスケール）")
+                            .font(.caption.bold())
+                            .foregroundColor(.white)
+                        Spacer()
                     }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
                     
                     Divider().background(Color.white.opacity(0.15))
                     

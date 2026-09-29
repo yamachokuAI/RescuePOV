@@ -24,8 +24,14 @@ public final class MotionDetector: ObservableObject {
     @Published public private(set) var strokeProgress: Double = 0.0             // 現在のスイングにおける進行度 (0.0: 振り始め ... 1.0: 振り終わり)
     @Published public private(set) var swingIntensity: Double = 0.0             // 振りの勢い（角速度 rad/s または G）
     @Published public private(set) var currentAngleDegrees: Double = 0.0        // 現在の空間角度（度）
+    @Published public private(set) var currentGyroZ: Double = 0.0               // リアルタイム角速度 (rad/s)
     @Published public private(set) var strokeAngleRange: Double = 95.0          // 学習されたスイング振れ幅（度）
     @Published public private(set) var isMotionActive: Bool = false
+    @Published public private(set) var isOverheadSwinging: Bool = false         // 頭上で振っていることを検知（自動POV開始用）
+    
+    // キャリブレーション保持
+    @Published public var userAsymmetryRatio: Double = 1.0                     // 往路/復路の非対称比
+    @Published public var isUserCalibrated: Bool = false                       // キャリブレーション済みフラグ
     
     // モード設定
     @Published public var invertSwingDirection: Bool = false                    // 左右スイング判定の反転
@@ -36,22 +42,52 @@ public final class MotionDetector: ObservableObject {
     public var windowEndRatio: Double = 0.85                                   // スイング終了85%以降は消灯
     
     // 内部トラッキング用
-    private var currentTheta: Double = 0.0
+    public private(set) var currentTheta: Double = 0.0
     private var swingStartTheta: Double = 0.0   // 現在のスイング開始時の角度
     private var leftTurnAngle: Double = -0.80   // 左端（rad）約 -46度
     private var rightTurnAngle: Double = 0.85   // 右端（rad）約 +49度
-    private var learnedStrokeWidth: Double = 1.65 // 平均振れ幅（rad）約 95度
+    public private(set) var learnedStrokeWidth: Double = 1.65 // 平均振れ幅（rad）約 95度
     private var lastGyroZ: Double = 0.0
     private var lastUpdateTime: Date = Date()
     private var isCalibrated: Bool = false
     private var lastTurnTime: Date = Date()
     private var horizontalStabilizeCounter: Int = 0
+    private var swingTriggerCounter: Int = 0
     
     // シミュレーション（センサー未搭載環境）用
     private var simulationTimer: Timer?
     private var simulationPhase: Double = 0.0
     
-    private init() {}
+    private init() {
+        loadCalibration()
+    }
+    
+    /// ユーザー個人のスイング・ヒステリシス計測結果を反映・保存
+    public func saveCalibration(asymmetryRatio: Double, strokeWidthRad: Double) {
+        self.userAsymmetryRatio = asymmetryRatio
+        self.learnedStrokeWidth = max(min(strokeWidthRad, 2.5), 0.8)
+        self.strokeAngleRange = self.learnedStrokeWidth * (180.0 / .pi)
+        self.isUserCalibrated = true
+        UserDefaults.standard.set(asymmetryRatio, forKey: "user_asymmetry_ratio")
+        UserDefaults.standard.set(strokeWidthRad, forKey: "user_stroke_width_rad")
+        UserDefaults.standard.set(true, forKey: "is_user_calibrated")
+    }
+    
+    /// 保存済みキャリブレーションのロード
+    public func loadCalibration() {
+        if UserDefaults.standard.bool(forKey: "is_user_calibrated") {
+            let ratio = UserDefaults.standard.double(forKey: "user_asymmetry_ratio")
+            let width = UserDefaults.standard.double(forKey: "user_stroke_width_rad")
+            if ratio > 0.3 && ratio < 3.0 {
+                self.userAsymmetryRatio = ratio
+            }
+            if width > 0.6 && width < 3.0 {
+                self.learnedStrokeWidth = width
+                self.strokeAngleRange = width * (180.0 / .pi)
+            }
+            self.isUserCalibrated = true
+        }
+    }
     
     /// モーション検知を開始（100Hz高精度位置トラッキング）
     public func start(direction: POVDirection) {
@@ -104,6 +140,7 @@ public final class MotionDetector: ObservableObject {
         }
         
         let gyro = invertSwingDirection ? -rawGyro : rawGyro
+        self.currentGyroZ = gyro
         self.swingIntensity = abs(gyro)
         
         // 1. 水平検知＆上下逆さま検知（電源ボタン誤押し回避）
@@ -112,6 +149,22 @@ public final class MotionDetector: ObservableObject {
         let isQuiet = self.swingIntensity < 0.8
         
         self.isUpsideDown = gravity.y > 0.35 // 上下逆に持っている場合
+        
+        // 頭上スイング自動検知（頭上に掲げて左右に振ると自動でPOVフルスクリーン発光開始）
+        let isOverhead = !isFlat && (abs(gravity.y) > 0.30 || abs(gravity.z) < 0.70)
+        if isOverhead && self.swingIntensity > 1.2 {
+            swingTriggerCounter += 1
+            if swingTriggerCounter >= 6 { // 約0.06秒で即座に反応
+                if !self.isOverheadSwinging {
+                    self.isOverheadSwinging = true
+                }
+            }
+        } else if isFlat && isQuiet {
+            swingTriggerCounter = 0
+            if self.isOverheadSwinging {
+                self.isOverheadSwinging = false
+            }
+        }
         
         if isFlat && isQuiet {
             horizontalStabilizeCounter += 1
@@ -237,5 +290,11 @@ public final class MotionDetector: ObservableObject {
             }
             self.currentAngleDegrees = s * 50.0
         }
+    }
+    
+    /// 頭上スイング自動検知トリガーのリセット
+    public func resetOverheadTrigger() {
+        self.isOverheadSwinging = false
+        self.swingTriggerCounter = 0
     }
 }
