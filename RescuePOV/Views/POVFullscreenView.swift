@@ -47,22 +47,22 @@ public struct POVFullscreenView: View {
     public var onDismiss: (() -> Void)? = nil
     
     @State private var currentText: String
+    private let initialText: String
     let direction: POVDirection
     let color: POVColor
     let mirrorForViewer: Bool
     
     @StateObject private var motionDetector = MotionDetector.shared
+    @ObservedObject private var voiceService = VoiceRescueService.shared
     
     @State private var previousBrightness: CGFloat = 0.5
     @State private var slices: [[Bool]] = []
     @State private var showInitialGuide: Bool = true
     @State private var isTestFlash: Bool = false
     
-    // 表示パラメータ（パターン連動: 実機ベストの精細極太44pxをデフォルト設定）
-    @State private var selectedPattern: POVPattern = .sharpWide
-    @State private var slitWidth: CGFloat = 44.0
-    @State private var isDiagonal: Bool = false
-    @State private var activeDotRatio: CGFloat = 0.80
+    // 最大光量固定（実機テスト検証ベストの44px高輝度・隙間保証モデル）
+    private let slitWidth: CGFloat = 44.0
+    private let activeDotRatio: CGFloat = 0.80
     @State private var manualShowControls: Bool = false
     
     /// 水平時、またはタップ時にのみコントロールUIを表示
@@ -78,6 +78,7 @@ public struct POVFullscreenView: View {
         onDismiss: (() -> Void)? = nil
     ) {
         self._currentText = State(initialValue: text)
+        self.initialText = text
         self.direction = direction
         self.color = color
         self.mirrorForViewer = mirrorForViewer
@@ -89,13 +90,14 @@ public struct POVFullscreenView: View {
             // 背景黒（完全な漆黒）
             Color.black.ignoresSafeArea()
             
-            // CADisplayLink＋位置同期による高光量スリット残像キャンバス（往復両方向同期）
+            // CADisplayLink＋位置同期による高光量スリット残像キャンバス（往復両方向同期・端から端まで全発光）
             POVCanvasRepresentable(
                 slices: slices,
+                rawText: currentText,
                 direction: direction,
                 color: isTestFlash ? UIColor.white : color.uiColor,
                 slitWidth: slitWidth,
-                isDiagonal: isDiagonal,
+                isDiagonal: false,
                 activeDotRatio: activeDotRatio
             )
             .ignoresSafeArea()
@@ -210,43 +212,38 @@ public struct POVFullscreenView: View {
                 
                 // 水平時に現れるコントロールパネル
                 VStack(spacing: 12) {
-                    // 光り方の仕様（実機検証ベスト黄金比に一本化）
-                    HStack {
-                        Image(systemName: "sparkles")
-                            .foregroundColor(.yellow)
-                        Text("光り方: 実機最適化（44px極太・隙間保証・垂直フルスケール）")
-                            .font(.caption.bold())
-                            .foregroundColor(.white)
-                        Spacer()
+                    // 【疲労対策・振れ幅マルチモード セレクター】
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "figure.walk.motion")
+                                .foregroundColor(.cyan)
+                            Text("疲労対応・振れ幅モード")
+                                .font(.caption.bold())
+                                .foregroundColor(.white)
+                            Spacer()
+                            Text(motionDetector.activeRangeMode.shortTitle)
+                                .font(.system(size: 9.5).bold())
+                                .foregroundColor(.cyan)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.cyan.opacity(0.2)))
+                        }
+                        
+                        Picker("振れ幅モード", selection: $motionDetector.selectedRangeMode) {
+                            ForEach(POVDisplayRangeMode.allCases) { mode in
+                                Text(mode.shortTitle).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        
+                        Text(motionDetector.selectedRangeMode.description)
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.8))
+                            .lineLimit(2)
                     }
                     .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.white.opacity(0.08)))
-                    
-                    Divider().background(Color.white.opacity(0.15))
-                    
-                    // スリット幅微調整
-                    HStack {
-                        Image(systemName: "sun.max.fill")
-                            .foregroundColor(.yellow)
-                        Text("スリット幅・光量微調整")
-                            .font(.caption.bold())
-                            .foregroundColor(.white)
-                        Spacer()
-                        Text(String(format: "%.0f px", slitWidth))
-                            .font(.caption.monospacedDigit().bold())
-                            .foregroundColor(.yellow)
-                    }
-                    
-                    Slider(value: $slitWidth, in: 12...120, step: 2)
-                        .tint(.yellow)
-                    
-                    HStack(spacing: 8) {
-                        Image(systemName: "arrow.left.arrow.right")
-                            .foregroundColor(.cyan)
-                        Text("左右両方向（往路・復路）完全同期発光中 ｜ 掲げると全UI自動消灯")
-                            .font(.system(size: 10))
-                            .foregroundColor(.white.opacity(0.85))
-                    }
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.cyan.opacity(0.12)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
                     
                     Divider().background(Color.white.opacity(0.15))
                     
@@ -281,21 +278,82 @@ public struct POVFullscreenView: View {
                     
                     Divider().background(Color.white.opacity(0.15))
                     
-                    // リアルタイムステータス
-                    HStack {
-                        Circle()
-                            .fill(motionDetector.isEmitting ? Color.green : Color.gray)
-                            .frame(width: 8, height: 8)
+                    // 【叫び声音声リアルタイム同期設定カード】
+                    VStack(alignment: .leading, spacing: 6) {
+                        Toggle(isOn: $voiceService.isVoiceSyncEnabled) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "mic.badge.waveform.fill")
+                                    .foregroundColor(voiceService.isVoiceSyncEnabled ? .yellow : .gray)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("叫び声・音声リアルタイム文字反映")
+                                        .font(.caption.bold())
+                                        .foregroundColor(.white)
+                                    Text(voiceService.isVoiceSyncEnabled ? "叫んだ声（HELP、たすけて等）で空中文字を自動上書き" : "オフ（選択した文字を固定表示）")
+                                        .font(.system(size: 9))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .tint(.yellow)
+                        .onChange(of: voiceService.isVoiceSyncEnabled) { _, enabled in
+                            if enabled {
+                                voiceService.startListening()
+                            } else {
+                                voiceService.stopListening()
+                                currentText = initialText
+                                rebuildSlices()
+                            }
+                        }
                         
-                        Text(motionDetector.isEmitting ? "往復同期発光中" : "端部減速・消灯中")
-                            .font(.caption2.bold())
-                            .foregroundColor(.white.opacity(0.9))
+                        if voiceService.isVoiceSyncEnabled {
+                            HStack {
+                                Text("マイク状態: \(voiceService.statusMessage)")
+                                    .font(.system(size: 9))
+                                    .foregroundColor(.yellow.opacity(0.9))
+                                Spacer()
+                                if voiceService.isShouting {
+                                    Text("🗣 大声を検知中")
+                                        .font(.system(size: 9).bold())
+                                        .foregroundColor(.red)
+                                }
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(Color.yellow.opacity(0.12)))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.yellow.opacity(0.3), lineWidth: 1))
+                    
+                    Divider().background(Color.white.opacity(0.15))
+                    
+                    // リアルタイムステータス ＆ 頭上同期モニター
+                    VStack(spacing: 4) {
+                        HStack {
+                            Circle()
+                                .fill(motionDetector.isEmitting ? Color.green : Color.gray)
+                                .frame(width: 8, height: 8)
+                            
+                            Text(motionDetector.isEmitting ? "往復同期発光中" : "端部減速・消灯中")
+                                .font(.caption2.bold())
+                                .foregroundColor(.white.opacity(0.9))
+                            
+                            Spacer()
+                            
+                            if motionDetector.isRealtimeOverheadSync {
+                                Text("頭上リアルタイム同期中⚡️")
+                                    .font(.system(size: 9).bold())
+                                    .foregroundColor(.yellow)
+                            }
+                        }
                         
-                        Spacer()
-                        
-                        Text(String(format: "位置: %.0f%% (振れ幅: %.0f° / 速度: %.1f)", motionDetector.strokeProgress * 100.0, motionDetector.strokeAngleRange, motionDetector.swingIntensity))
-                            .font(.caption2.monospacedDigit())
-                            .foregroundColor(.green)
+                        HStack {
+                            Text(String(format: "往復時間(Y): %.2fs ｜ 周波数: %.1fHz", motionDetector.roundTripDuration, motionDetector.swingFrequencyHz))
+                                .font(.system(size: 9.5).monospacedDigit().bold())
+                                .foregroundColor(.cyan)
+                            Spacer()
+                            Text(String(format: "振れ幅(X): %.0f° (位置: %.0f%%)", motionDetector.strokeAngleRange, motionDetector.strokeProgress * 100.0))
+                                .font(.system(size: 9.5).monospacedDigit())
+                                .foregroundColor(.green)
+                        }
                     }
                 }
                 .padding(14)
@@ -328,9 +386,23 @@ public struct POVFullscreenView: View {
             UIScreen.main.brightness = 1.0 // 常に最大光量
             UIApplication.shared.isIdleTimerDisabled = true
             
-            applyPattern(selectedPattern)
             rebuildSlices()
             motionDetector.start(direction: direction)
+            
+            // 音声認識サービスのリスニング開始＆コールバック登録（画面に余計な警報は一切出さず静かに文字反映）
+            voiceService.onTextRecognized = { recognized in
+                self.currentText = recognized
+                self.rebuildSlices()
+            }
+            
+            voiceService.onResetRequested = {
+                self.currentText = self.initialText
+                self.rebuildSlices()
+            }
+            
+            if voiceService.isVoiceSyncEnabled {
+                voiceService.startListening()
+            }
             
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
                 withAnimation(.easeOut(duration: 0.3)) {
@@ -338,26 +410,29 @@ public struct POVFullscreenView: View {
                 }
             }
         }
+        .onChange(of: motionDetector.activeRangeMode) { _, _ in
+            rebuildSlices()
+        }
         .onDisappear {
             UIScreen.main.brightness = previousBrightness
             UIApplication.shared.isIdleTimerDisabled = false
             motionDetector.stop()
+            voiceService.stopListening()
+            voiceService.onTextRecognized = nil
+            voiceService.onResetRequested = nil
         }
     }
     
-    private func applyPattern(_ pattern: POVPattern) {
-        self.slitWidth = pattern.defaultSlitWidth
-        self.isDiagonal = pattern.isDiagonal
-        self.activeDotRatio = pattern.activeDotRatio
-    }
-    
     private func rebuildSlices() {
+        self.motionDetector.staticTextLength = max(1, currentText.count)
+        let isCondensed = (motionDetector.activeRangeMode == .compactSnap)
         self.slices = BitmapGenerator.shared.generateSlices(
             text: currentText,
             direction: direction,
-            targetSlices: 36,
-            sliceResolution: 28, // 7分割等幅マッピング（Eの横線間隙間を2倍確保）
-            mirrorForViewer: mirrorForViewer
+            targetSlices: isCondensed ? 24 : 36, // 30cm手首モード時は空間凝縮24スライス
+            sliceResolution: 28,
+            mirrorForViewer: mirrorForViewer,
+            isCondensed: isCondensed
         )
     }
     

@@ -19,8 +19,8 @@ public enum POVDirection: String, CaseIterable, Identifiable {
 public final class BitmapGenerator {
     public static let shared = BitmapGenerator()
     
-    // 定番レスキュー文字の超精密5x7ドットビットマップ辞書（黒の隙間が保証される）
-    private let dotFont: [Character: [UInt8]] = [
+    // 定番レスキュー＆パーティー文字の超精密5x7ドットビットマップ辞書（黒の隙間が保証される）
+    public let dotFont: [Character: [UInt8]] = [
         "H": [0b1111111, 0b0001000, 0b0001000, 0b0001000, 0b1111111],
         "E": [0b1111111, 0b1001001, 0b1001001, 0b1001001, 0b1000001],
         "L": [0b1111111, 0b0000001, 0b0000001, 0b0000001, 0b0000001],
@@ -32,32 +32,73 @@ public final class BitmapGenerator {
         "B": [0b1111111, 0b1001001, 0b1001001, 0b1001001, 0b0110110],
         "C": [0b0111110, 0b1000001, 0b1000001, 0b1000001, 0b0100010],
         "D": [0b1111111, 0b1000001, 0b1000001, 0b1000001, 0b0111110],
+        "F": [0b1111111, 0b1001000, 0b1001000, 0b1001000, 0b1000000],
+        "G": [0b0111110, 0b1000001, 0b1000001, 0b1001001, 0b0101110],
+        "I": [0b1000001, 0b1000001, 0b1111111, 0b1000001, 0b1000001],
+        "J": [0b0000010, 0b0000001, 0b1000001, 0b1111110, 0b1000000],
+        "M": [0b1111111, 0b0100000, 0b0010000, 0b0100000, 0b1111111],
+        "N": [0b1111111, 0b0100000, 0b0010000, 0b0001000, 0b1111111],
+        "R": [0b1111111, 0b1001000, 0b1001100, 0b1001010, 0b0110001],
         "T": [0b1000000, 0b1000000, 0b1111111, 0b1000000, 0b1000000],
+        "U": [0b1111110, 0b0000001, 0b0000001, 0b0000001, 0b1111110],
+        "V": [0b1111100, 0b0000010, 0b0000001, 0b0000010, 0b1111100],
+        "W": [0b1111111, 0b0000010, 0b0001100, 0b0000010, 0b1111111],
+        "X": [0b1100011, 0b0010100, 0b0001000, 0b0010100, 0b1100011],
+        "Y": [0b1100000, 0b0010000, 0b0001111, 0b0010000, 0b1100000],
+        "Z": [0b1000011, 0b1000101, 0b1001001, 0b1010001, 0b1100001],
         "1": [0b0010001, 0b0100001, 0b1111111, 0b0000001, 0b0000001],
         "0": [0b0111110, 0b1000001, 0b1000001, 0b1000001, 0b0111110],
+        "2": [0b0100011, 0b1000101, 0b1001001, 0b1010001, 0b0100001],
+        "3": [0b0100010, 0b1000001, 0b1001001, 0b1001001, 0b0110110],
+        "4": [0b0001100, 0b0010100, 0b0100100, 0b1111111, 0b0000100],
+        "5": [0b1110010, 0b1001001, 0b1001001, 0b1001001, 0b1000110],
+        "6": [0b0111110, 0b1001001, 0b1001001, 0b1001001, 0b0110010],
+        "7": [0b1000000, 0b1000111, 0b1001000, 0b1010000, 0b1100000],
+        "8": [0b0110110, 0b1001001, 0b1001001, 0b1001001, 0b0110110],
         "9": [0b0100001, 0b1001001, 0b1001001, 0b1001001, 0b0111110],
-        "!": [0b0000000, 0b1011111, 0b0000000, 0b0000000, 0b0000000],
-        "?": [0b0100000, 0b1000000, 0b1001101, 0b0110000, 0b0000000],
-        " ": [0b0000000, 0b0000000, 0b0000000]
+        "!": [0b0000000, 0b1011111, 0b0000000],
+        "?": [0b0100000, 0b1000000, 0b1001101, 0b0110000],
+        " ": [0b0000000, 0b0000000]
     ]
     
     private init() {}
     
+    /// 1文字分のドットマトリクス（7行 x N列）を取得（0cm全画面ストロボ描画用）
+    /// フラッシュモードと完全に一致する字体を画面いっぱいに描画するために使用
+    public func getSingleCharMatrix(char: Character) -> [[Bool]] {
+        let upper = Character(char.uppercased())
+        if let pattern = dotFont[upper] {
+            var matrix: [[Bool]] = [] // [col][row]
+            for col in pattern {
+                var colDots: [Bool] = []
+                for row in 0..<7 {
+                    let isOn = ((col >> (6 - row)) & 1) == 1
+                    colDots.append(isOn)
+                }
+                matrix.append(colDots)
+            }
+            return matrix
+        }
+        
+        // 日本語等の場合は1文字を7行x7列のラスタライズマトリクスへ変換
+        return rasterizeSingleChar(char: char, resolution: 7)
+    }
+    
     /// テキストを2次元ブール配列（スライスのリスト）に変換します
+    /// - Parameter isCondensed: 30cm手首スナップ用。文字幅をギュッと縦長スリムに凝縮し、狭い空間にクッキリ収める
     public func generateSlices(
         text: String,
         direction: POVDirection,
         targetSlices: Int = 48,
         sliceResolution: Int = 20,
-        mirrorForViewer: Bool = true
+        mirrorForViewer: Bool = true,
+        isCondensed: Bool = false
     ) -> [[Bool]] {
         guard !text.isEmpty else {
             return Array(repeating: Array(repeating: false, count: sliceResolution), count: targetSlices)
         }
         
         let upper = text.uppercased()
-        
-        // 1. 全ての文字がドットフォント辞書に含まれるか確認
         let canUseDotFont = upper.allSatisfy { dotFont[$0] != nil }
         
         if canUseDotFont {
@@ -66,7 +107,8 @@ public final class BitmapGenerator {
                 direction: direction,
                 targetSlices: targetSlices,
                 sliceResolution: sliceResolution,
-                mirrorForViewer: mirrorForViewer
+                mirrorForViewer: mirrorForViewer,
+                isCondensed: isCondensed
             )
         } else {
             return generateFromRaster(
@@ -74,7 +116,8 @@ public final class BitmapGenerator {
                 direction: direction,
                 targetSlices: targetSlices,
                 sliceResolution: sliceResolution,
-                mirrorForViewer: mirrorForViewer
+                mirrorForViewer: mirrorForViewer,
+                isCondensed: isCondensed
             )
         }
     }
@@ -85,19 +128,32 @@ public final class BitmapGenerator {
         direction: POVDirection,
         targetSlices: Int,
         sliceResolution: Int,
-        mirrorForViewer: Bool
+        mirrorForViewer: Bool,
+        isCondensed: Bool
     ) -> [[Bool]] {
         var rawCols: [[Bool]] = []
         
-        // 前後マージン（消灯列）
-        let marginCols = 4
+        // 30cm手首スナップ用: マージンと文字間を極限まで引き締める
+        let marginCols = isCondensed ? 1 : 4
+        let spaceCols = isCondensed ? 1 : 3
+        
         for _ in 0..<marginCols {
             rawCols.append([Bool](repeating: false, count: 7))
         }
         
         for char in text {
             if let pattern = dotFont[char] {
-                for col in pattern {
+                // 30cm手首スナップ用: 5列パターンから[先頭, 中央, 末尾]の3列を抽出し、超スリム縦長フォント化
+                let activePattern: [UInt8]
+                if isCondensed && pattern.count >= 3 {
+                    let midIdx = pattern.count / 2
+                    let lastIdx = pattern.count - 1
+                    activePattern = [pattern[0], pattern[midIdx], pattern[lastIdx]]
+                } else {
+                    activePattern = pattern
+                }
+                
+                for col in activePattern {
                     var colDots: [Bool] = []
                     for row in 0..<7 {
                         let isOn = ((col >> (6 - row)) & 1) == 1
@@ -105,10 +161,11 @@ public final class BitmapGenerator {
                     }
                     rawCols.append(colDots)
                 }
-                // 文字間スペース（3列の完全消灯黒）
-                rawCols.append([Bool](repeating: false, count: 7))
-                rawCols.append([Bool](repeating: false, count: 7))
-                rawCols.append([Bool](repeating: false, count: 7))
+                
+                // 文字間スペース（30cm手首用は1列に凝縮）
+                for _ in 0..<spaceCols {
+                    rawCols.append([Bool](repeating: false, count: 7))
+                }
             }
         }
         
@@ -118,12 +175,10 @@ public final class BitmapGenerator {
         }
         
         // 縦方向の解像度（7ドット ➔ sliceResolution ドット）へスケールアップ
-        // 画面の上下端まで文字を最大化（上下マージン0）し、文字サイズを限界まで大きくする
         var resultSlices: [[Bool]] = []
         for col in rawCols {
             var scaledCol: [Bool] = []
             for y in 0..<sliceResolution {
-                // 画面の縦（または対角線）を100%フルに使って文字高さを最大化
                 let srcY = Int(Double(y) / Double(sliceResolution) * 7.0)
                 let clampedSrcY = min(max(srcY, 0), 6)
                 scaledCol.append(col[clampedSrcY])
@@ -131,7 +186,6 @@ public final class BitmapGenerator {
             resultSlices.append(scaledCol)
         }
         
-        // 観察者（対向者）視点に合わせて左右反転
         if mirrorForViewer {
             resultSlices.reverse()
         }
@@ -139,15 +193,20 @@ public final class BitmapGenerator {
         return resultSlices
     }
     
-    /// 日本語など自由入力用の高コントラストラスタライズ
+    /// 日本語など自由入力用の高コントラスト・文字間隙間保証ラスタライズ
     private func generateFromRaster(
         text: String,
         direction: POVDirection,
         targetSlices: Int,
         sliceResolution: Int,
-        mirrorForViewer: Bool
+        mirrorForViewer: Bool,
+        isCondensed: Bool
     ) -> [[Bool]] {
-        let width = targetSlices
+        let charCount = max(text.count, 1)
+        // isCondensed時は1文字あたりのスライス幅を通常の約半分（8スライス）に凝縮
+        let slicePerChar = isCondensed ? 8 : 14
+        let dynamicWidth = max(targetSlices, charCount * slicePerChar + (isCondensed ? 4 : 10))
+        let width = dynamicWidth
         let height = sliceResolution
         
         let colorSpace = CGColorSpaceCreateDeviceGray()
@@ -173,13 +232,18 @@ public final class BitmapGenerator {
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1.0, y: -1.0)
         
-        // 細めのウェイトにして線が太りすぎないように調整
-        let fontSize = CGFloat(height) * 0.70
-        let font = UIFont.systemFont(ofSize: fontSize, weight: .bold)
+        let fontSize = CGFloat(height) * (isCondensed ? 0.90 : 0.78)
+        let font: UIFont
+        if let hiragino = UIFont(name: "HiraginoSans-W8", size: fontSize) {
+            font = hiragino
+        } else {
+            font = UIFont.systemFont(ofSize: fontSize, weight: .heavy)
+        }
         
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
-            .foregroundColor: UIColor.white
+            .foregroundColor: UIColor.white,
+            .kern: isCondensed ? 0.5 : 3.5
         ]
         
         let attributedString = NSAttributedString(string: text, attributes: attributes)
@@ -194,7 +258,7 @@ public final class BitmapGenerator {
         UIGraphicsPopContext()
         
         var slices: [[Bool]] = []
-        let threshold: UInt8 = 160 // 閾値を高めにして細くクッキリした線だけを抽出
+        let threshold: UInt8 = 130
         
         for x in 0..<width {
             let colX = mirrorForViewer ? (width - 1 - x) : x
@@ -207,5 +271,56 @@ public final class BitmapGenerator {
         }
         
         return slices
+    }
+    
+    /// 日本語等の単一文字を7x7のドットマトリクスへラスタライズ（0cm全画面ストロボ描画用）
+    private func rasterizeSingleChar(char: Character, resolution: Int = 7) -> [[Bool]] {
+        let width = resolution
+        let height = resolution
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        var rawData = [UInt8](repeating: 0, count: width * height)
+        
+        guard let context = CGContext(
+            data: &rawData,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else {
+            return Array(repeating: Array(repeating: false, count: height), count: width)
+        }
+        
+        context.setFillColor(gray: 0.0, alpha: 1.0)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        
+        UIGraphicsPushContext(context)
+        context.saveGState()
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1.0, y: -1.0)
+        
+        let font = UIFont.systemFont(ofSize: CGFloat(height) * 0.95, weight: .black)
+        let attr: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.white
+        ]
+        let str = NSAttributedString(string: String(char), attributes: attr)
+        let size = str.size()
+        str.draw(at: CGPoint(x: (CGFloat(width) - size.width) / 2.0, y: (CGFloat(height) - size.height) / 2.0))
+        
+        context.restoreGState()
+        UIGraphicsPopContext()
+        
+        var matrix: [[Bool]] = []
+        for x in 0..<width {
+            var col: [Bool] = []
+            for y in 0..<height {
+                let pixel = rawData[y * width + x]
+                col.append(pixel > 120)
+            }
+            matrix.append(col)
+        }
+        return matrix
     }
 }

@@ -9,6 +9,43 @@ public enum SwingPhase {
     case backward  // 復路（ブランク/消灯区間）
 }
 
+/// 振れ幅と疲労度に応じたマルチアダプティブ・スイングモード
+public enum POVDisplayRangeMode: String, CaseIterable, Identifiable {
+    case auto = "AI自動適応（推奨）"
+    case compactSnap = "手首30cm浮き出しホログラム"
+    case wide = "頭上ワイド（60〜100cm）"
+    case zeroStatic = "ゼロスイング（0cm静止・全画面文字ストロボ）"
+    
+    public var id: String { rawValue }
+    
+    public var shortTitle: String {
+        switch self {
+        case .auto: return "AI自動"
+        case .compactSnap: return "30cm浮き出し"
+        case .wide: return "ワイド"
+        case .zeroStatic: return "0cm静止ストロボ"
+        }
+    }
+    
+    public var iconName: String {
+        switch self {
+        case .auto: return "sparkles"
+        case .compactSnap: return "hand.raised.fill"
+        case .wide: return "arrow.left.and.right"
+        case .zeroStatic: return "bolt.fill"
+        }
+    }
+    
+    public var description: String {
+        switch self {
+        case .auto: return "腕の疲労に合わせて、ワイド ⇄ 30cm手首 ⇄ 0cm静止ストロボをAIがリアルタイムに自動選択。"
+        case .compactSnap: return "腕を上げずに手首の高速スナップ（約25〜35cm）だけで、文字が空間に立体的に浮き出るモード。"
+        case .wide: return "頭上で大きく左右に振り、遠方の救助者やヘリに向けて文字を大展開するモード。"
+        case .zeroStatic: return "体力が尽きて振れなくなった時、画面全体を使って一文字ずつ超高輝度ストロボ点滅させるモード。"
+        }
+    }
+}
+
 /// 端末の角速度・姿勢から「物理空間位置」をリアルタイム算出し、
 /// 空間座標に1対1で文字スライスを同期表示する位置駆動型モーションディテクタ
 public final class MotionDetector: ObservableObject {
@@ -18,7 +55,7 @@ public final class MotionDetector: ObservableObject {
     
     // 公開プロパティ
     @Published public private(set) var currentPhase: SwingPhase = .forward
-    @Published public private(set) var isEmitting: Bool = false                 // 最高速中間域で文字スリット発光中フラグ
+    @Published public private(set) var isEmitting: Bool = false                 // スリット発光中フラグ
     @Published public private(set) var isDeviceHorizontal: Bool = false         // 端末が手元で水平に保たれているか（ボタン表示用）
     @Published public private(set) var isUpsideDown: Bool = false               // 端末が上下逆さまに持たれているか（電源ボタン誤押し回避）
     @Published public private(set) var strokeProgress: Double = 0.0             // 現在のスイングにおける進行度 (0.0: 振り始め ... 1.0: 振り終わり)
@@ -28,6 +65,16 @@ public final class MotionDetector: ObservableObject {
     @Published public private(set) var strokeAngleRange: Double = 95.0          // 学習されたスイング振れ幅（度）
     @Published public private(set) var isMotionActive: Bool = false
     @Published public private(set) var isOverheadSwinging: Bool = false         // 頭上で振っていることを検知（自動POV開始用）
+    @Published public private(set) var isRealtimeOverheadSync: Bool = false     // 頭上リアルタイム同期中（X:距離維持、Y:往復時間短縮に追従）
+    @Published public private(set) var roundTripDuration: Double = 0.60         // リアルタイム往復時間（秒）
+    @Published public private(set) var swingFrequencyHz: Double = 1.66          // リアルタイムスイング周波数（Hz）
+    
+    // 疲労対応・マルチレンジモード
+    @Published public var selectedRangeMode: POVDisplayRangeMode = .auto        // 選択されたレンジモード
+    @Published public private(set) var activeRangeMode: POVDisplayRangeMode = .wide // 現在実効中のモード
+    @Published public private(set) var staticCharIndex: Int = 0                 // 0cm静止ストロボ時の文字インデックス
+    @Published public private(set) var isStaticFlashVisible: Bool = true        // 0cmストロボの点滅パルス
+    public var staticTextLength: Int = 4                                        // 表示対象文字列長（一文字送り用）
     
     // キャリブレーション保持
     @Published public var userAsymmetryRatio: Double = 1.0                     // 往路/復路の非対称比
@@ -37,9 +84,9 @@ public final class MotionDetector: ObservableObject {
     @Published public var invertSwingDirection: Bool = false                    // 左右スイング判定の反転
     @Published public var strokeSensitivity: Double = 1.0                       // 振り幅感度調整 (0.7〜1.5)
     
-    // 中間域発光ウィンドウ設定（両端の減速域をカットして最高速ゾーンのみ発光）
-    public var windowStartRatio: Double = 0.15                                 // スイング開始15%は消灯
-    public var windowEndRatio: Double = 0.85                                   // スイング終了85%以降は消灯
+    // 発光ウィンドウ設定（両端の文字まで100%完全表示: Hの左端〜Pの右端まで全域発光）
+    public var windowStartRatio: Double = 0.0                                  // スイング開始端から即座に発光
+    public var windowEndRatio: Double = 1.0                                    // スイング終了端まで完全発光維持
     
     // 内部トラッキング用
     public private(set) var currentTheta: Double = 0.0
@@ -53,6 +100,10 @@ public final class MotionDetector: ObservableObject {
     private var lastTurnTime: Date = Date()
     private var horizontalStabilizeCounter: Int = 0
     private var swingTriggerCounter: Int = 0
+    private var quietTimeCounter: Double = 0.0 // 静止継続時間（秒）
+    
+    // 0cm静止ストロボ用タイマー
+    private var staticStrobeTimer: Timer?
     
     // シミュレーション（センサー未搭載環境）用
     private var simulationTimer: Timer?
@@ -60,6 +111,7 @@ public final class MotionDetector: ObservableObject {
     
     private init() {
         loadCalibration()
+        startStaticStrobeTimer()
     }
     
     /// ユーザー個人のスイング・ヒステリシス計測結果を反映・保存
@@ -119,6 +171,7 @@ public final class MotionDetector: ObservableObject {
         simulationTimer?.invalidate()
         simulationTimer = nil
         isMotionActive = false
+        isRealtimeOverheadSync = false
         strokeProgress = 0.0
         swingIntensity = 0.0
     }
@@ -146,24 +199,62 @@ public final class MotionDetector: ObservableObject {
         // 1. 水平検知＆上下逆さま検知（電源ボタン誤押し回避）
         let gravity = motion.gravity
         let isFlat = (gravity.z < -0.70) && (abs(gravity.x) < 0.40) && (abs(gravity.y) < 0.45)
-        let isQuiet = self.swingIntensity < 0.8
+        let isQuiet = self.swingIntensity < 0.45 // 静止または微動
         
-        self.isUpsideDown = gravity.y > 0.35 // 上下逆に持っている場合
+        // 疲労・振れ幅に応じたAI自動レンジモード切り替え
+        if isQuiet {
+            quietTimeCounter += dt
+            if quietTimeCounter >= 1.0 { // 1秒以上静止＝疲労または狭所
+                if selectedRangeMode == .auto {
+                    if activeRangeMode != .zeroStatic {
+                        activeRangeMode = .zeroStatic
+                    }
+                }
+            }
+        } else {
+            quietTimeCounter = 0.0
+            if selectedRangeMode == .auto {
+                // スイング振幅と角速度から30cm手首スナップ vs ワイドを瞬時判定
+                if learnedStrokeWidth < 0.70 { // 約40度未満＝手首30cm浮き出しスナップ
+                    if activeRangeMode != .compactSnap {
+                        activeRangeMode = .compactSnap
+                    }
+                } else {
+                    if activeRangeMode != .wide {
+                        activeRangeMode = .wide
+                    }
+                }
+            }
+        }
         
-        // 頭上スイング自動検知（頭上に掲げて左右に振ると自動でPOVフルスクリーン発光開始）
+        // 手動選択されている場合はそのモードを強制適用
+        if selectedRangeMode != .auto && activeRangeMode != selectedRangeMode {
+            activeRangeMode = selectedRangeMode
+        }
+        
+        if isQuiet {
+            // 静止時にのみ上下逆さま判定を更新（激しく振っている最中の遠心力による画面反転バグを根絶）
+            self.isUpsideDown = gravity.y > 0.40
+        }
+        
+        // 頭上スイング自動検知（頭上に掲げて左右に振ると自動でPOVフルスクリーン発光開始＆リアルタイム速度同期）
         let isOverhead = !isFlat && (abs(gravity.y) > 0.30 || abs(gravity.z) < 0.70)
-        if isOverhead && self.swingIntensity > 1.2 {
+        let isFastSwing = self.swingIntensity > 0.8
+        
+        if isOverhead && isFastSwing {
             swingTriggerCounter += 1
-            if swingTriggerCounter >= 6 { // 約0.06秒で即座に反応
+            if swingTriggerCounter >= 4 { // 約0.04秒で即座に反応
                 if !self.isOverheadSwinging {
                     self.isOverheadSwinging = true
                 }
+                self.isRealtimeOverheadSync = true
             }
         } else if isFlat && isQuiet {
             swingTriggerCounter = 0
             if self.isOverheadSwinging {
                 self.isOverheadSwinging = false
             }
+            self.isRealtimeOverheadSync = false
         }
         
         if isFlat && isQuiet {
@@ -185,51 +276,38 @@ public final class MotionDetector: ObservableObject {
         self.currentAngleDegrees = currentTheta * (180.0 / .pi)
         
         // 3. 折り返し（ゼロクロス）の検出
-        if (lastGyroZ <= 0.05 && gyro > 0.05) || (lastGyroZ >= -0.05 && gyro < -0.05) {
-            handleTurnaround(isMovingPositive: gyro > 0, turnaroundTheta: currentTheta, now: now)
+        // 高速頭上スイング時は角速度の閾値を動的適応させて瞬時に折り返しをキャッチ
+        let zeroThreshold = self.isRealtimeOverheadSync ? 0.08 : 0.05
+        if (lastGyroZ <= zeroThreshold && gyro > zeroThreshold) || (lastGyroZ >= -zeroThreshold && gyro < -zeroThreshold) {
+            handleTurnaround(isMovingPositive: gyro > 0, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
         }
         
-        // 4. 【往路・復路ごとの正確な進行度算出 ＆ 最高速中間域制御】
-        let width = max(learnedStrokeWidth * strokeSensitivity, 0.8)
+        // 4. 【疲労適応 ＆ Hの左端からPの右端まで全域100%発光】
+        // 30cm手首モード時は手首の狭い振れ幅（最小0.15rad=約8.6度）に完全追従。ワイドモード時は0.38rad。
+        let minClampWidth = (activeRangeMode == .compactSnap) ? 0.15 : 0.38
+        let width = max(learnedStrokeWidth * strokeSensitivity, minClampWidth)
+        let minEmitSpeed = (activeRangeMode == .compactSnap) ? 0.08 : 0.15 // 手首の微小スイングでも即座に発光
         
-        if gyro > 0.4 {
+        if gyro > minEmitSpeed {
             // 往路（左から右へのスイング）: swingStartTheta(左端)からの進行
             self.currentPhase = .forward
             let strokeDelta = max(currentTheta - swingStartTheta, 0.0)
-            let rawProgress = strokeDelta / width
+            let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
             
-            let isSpeedSufficient = gyro > 0.8
-            let isInWindow = rawProgress >= windowStartRatio && rawProgress <= windowEndRatio
+            self.isEmitting = true
+            self.strokeProgress = rawProgress // 0.0(Hの左端) 〜 1.0(Pの右端)まで欠けなく全域発光
             
-            if isSpeedSufficient && isInWindow {
-                self.isEmitting = true
-                let mapped = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
-                self.strokeProgress = min(max(mapped, 0.0), 1.0)
-            } else {
-                self.isEmitting = false
-                self.strokeProgress = 0.0
-            }
-            
-        } else if gyro < -0.4 {
+        } else if gyro < -minEmitSpeed {
             // 復路（右から左へのスイング）: swingStartTheta(右端)からの進行
             self.currentPhase = .backward
             let strokeDelta = max(swingStartTheta - currentTheta, 0.0)
-            let rawProgress = strokeDelta / width
+            let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
             
-            let isSpeedSufficient = abs(gyro) > 0.8
-            let isInWindow = rawProgress >= windowStartRatio && rawProgress <= windowEndRatio
-            
-            if isSpeedSufficient && isInWindow {
-                self.isEmitting = true
-                let mapped = (rawProgress - windowStartRatio) / (windowEndRatio - windowStartRatio)
-                self.strokeProgress = min(max(mapped, 0.0), 1.0)
-            } else {
-                self.isEmitting = false
-                self.strokeProgress = 0.0
-            }
+            self.isEmitting = true
+            self.strokeProgress = rawProgress // 0.0(Pの右端) 〜 1.0(Hの左端)まで欠けなく全域発光
             
         } else {
-            // 停止・減速域
+            // 完全停止域（折り返しの極小瞬間）
             self.isEmitting = false
             self.strokeProgress = 0.0
         }
@@ -237,19 +315,38 @@ public final class MotionDetector: ObservableObject {
         lastGyroZ = gyro
     }
     
-    /// スイングの折り返し処理（振れ幅の自動学習とドリフト除去）
-    private func handleTurnaround(isMovingPositive: Bool, turnaroundTheta: Double, now: Date) {
+    /// スイングの折り返し処理（振れ幅の自動学習とリアルタイム周期適応）
+    private func handleTurnaround(isMovingPositive: Bool, turnaroundTheta: Double, currentGyro: Double, now: Date) {
         let interval = now.timeIntervalSince(lastTurnTime)
-        guard interval > 0.15 else { return } // 150ms以内のチャタリングノイズ除去
+        
+        // 手首スナップ（4〜6Hzの超高速往復）に完全追従する動的チャタリング防止インターバル
+        let dynamicMinInterval = (activeRangeMode == .compactSnap)
+            ? max(0.035, min(0.09, 0.28 / max(abs(currentGyro), 1.0)))
+            : max(0.050, min(0.14, 0.45 / max(abs(currentGyro), 1.0)))
+        guard interval > dynamicMinInterval else { return }
+        
+        // リアルタイム往復時間（Y: 往復時間）の計測と更新（手首高速往復に対応し下限0.08sへ拡大）
+        let halfDuration = interval
+        let measuredRoundTrip = halfDuration * 2.0
+        if measuredRoundTrip >= 0.08 && measuredRoundTrip <= 2.5 {
+            let alpha = measuredRoundTrip < self.roundTripDuration ? 0.60 : 0.40
+            self.roundTripDuration = self.roundTripDuration * (1.0 - alpha) + measuredRoundTrip * alpha
+            self.swingFrequencyHz = 1.0 / max(self.roundTripDuration, 0.08)
+        }
+        
         lastTurnTime = now
+        
+        let minAllowedWidth = (activeRangeMode == .compactSnap) ? 0.14 : 0.35
         
         if isMovingPositive {
             // 「右→左」から「左→右」への切り返し（左端に到達！往路スタート）
             leftTurnAngle = turnaroundTheta
             swingStartTheta = turnaroundTheta
             let width = abs(rightTurnAngle - leftTurnAngle)
-            if width > 0.7 && width < 2.5 {
-                learnedStrokeWidth = learnedStrokeWidth * 0.7 + width * 0.3
+            // 手首30cmスイング（0.15 rad〜）から頭上大振り（〜2.5 rad）まで、直近の振れ幅にリアルタイム追従して文字をギュッと収める
+            if width > minAllowedWidth && width < 2.5 {
+                let widthAlpha = 0.35 // 振れ幅変化に機敏に適応
+                learnedStrokeWidth = learnedStrokeWidth * (1.0 - widthAlpha) + width * widthAlpha
                 strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
             }
         } else {
@@ -257,8 +354,9 @@ public final class MotionDetector: ObservableObject {
             rightTurnAngle = turnaroundTheta
             swingStartTheta = turnaroundTheta
             let width = abs(rightTurnAngle - leftTurnAngle)
-            if width > 0.7 && width < 2.5 {
-                learnedStrokeWidth = learnedStrokeWidth * 0.7 + width * 0.3
+            if width > minAllowedWidth && width < 2.5 {
+                let widthAlpha = 0.35
+                learnedStrokeWidth = learnedStrokeWidth * (1.0 - widthAlpha) + width * widthAlpha
                 strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
             }
         }
@@ -271,16 +369,26 @@ public final class MotionDetector: ObservableObject {
         
         simulationTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             guard let self = self, self.isMotionActive else { return }
-            self.simulationPhase += 0.09
+            
+            // 頭上高速スイングを模したダイナミック速度（往復時間Yが約0.38秒に短縮、X:距離は一定）
+            let speedFactor: Double = self.isOverheadSwinging ? 0.16 : 0.09
+            self.simulationPhase += speedFactor
             let s = sin(self.simulationPhase)
             let c = cos(self.simulationPhase)
             
-            // 往復の進行度
+            // 往復時間と周波数のシミュレーション値
+            let simDuration = (2.0 * .pi / (speedFactor * 60.0))
+            self.roundTripDuration = simDuration
+            self.swingFrequencyHz = 1.0 / simDuration
+            self.currentGyroZ = c * (self.isOverheadSwinging ? 6.2 : 3.5)
+            self.swingIntensity = abs(self.currentGyroZ)
+            
+            // 往復の進行度（X: 距離は一定振れ幅50°を維持）
             let rawProgress = (s + 1.0) / 2.0
             self.currentPhase = c > 0 ? .forward : .backward
             
             // 往路も復路も中央域で同期発光
-            if rawProgress >= self.windowStartRatio && rawProgress <= self.windowEndRatio && abs(c) > 0.3 {
+            if rawProgress >= self.windowStartRatio && rawProgress <= self.windowEndRatio && abs(c) > 0.25 {
                 self.isEmitting = true
                 let mapped = (rawProgress - self.windowStartRatio) / (self.windowEndRatio - self.windowStartRatio)
                 self.strokeProgress = min(max(mapped, 0.0), 1.0)
@@ -295,6 +403,24 @@ public final class MotionDetector: ObservableObject {
     /// 頭上スイング自動検知トリガーのリセット
     public func resetOverheadTrigger() {
         self.isOverheadSwinging = false
+        self.isRealtimeOverheadSync = false
         self.swingTriggerCounter = 0
     }
+    
+    /// 0cm静止ストロボ用の自動一文字送りタイマー（0.36秒周期）
+    public func startStaticStrobeTimer() {
+        staticStrobeTimer?.invalidate()
+        staticStrobeTimer = Timer.scheduledTimer(withTimeInterval: 0.36, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if self.activeRangeMode == .zeroStatic {
+                // 文字の切り替わりに一瞬ブラックアウトを挟み、ストロボ残像効果を最大化
+                self.isStaticFlashVisible = false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) {
+                    self.staticCharIndex = (self.staticCharIndex + 1) % max(1, self.staticTextLength)
+                    self.isStaticFlashVisible = true
+                }
+            }
+        }
+    }
 }
+

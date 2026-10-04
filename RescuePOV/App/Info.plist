@@ -22,12 +22,18 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>暗闇で緊急時に背面LEDライト（トーチ）でSOSモールス信号を点滅させるために使用します。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>救助要請時に現在地（緯度・経度）を画面に表示し、救助隊に正確な位置を伝えるために使用します。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>頭上で端末を振りながら叫んだ救難の声をリアルタイムで文字に反映させるためにマイクを使用します。</string>
 	<key>NSMotionUsageDescription</key>
 	<string>端末を振る周期と速度を加速度センサーで検知し、空中に残像文字を同期表示するために使用します。</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>叫んだ救難メッセージ（HELP、たすけて等）を音声認識し、画面のLED残像表示に即座に文字反映するために使用します。</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiresFullScreen</key>

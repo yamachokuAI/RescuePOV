@@ -82,23 +82,51 @@ public struct SamplingView: View {
                         }
                         .padding(.vertical, 4)
                         
-                        // リアルタイムシンクロ率インジケーター
-                        HStack {
-                            Text("リアルタイム角速度:")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(String(format: "%.2f rad/s", detector.currentGyroZ))
-                                .font(.caption2.monospacedDigit().bold())
-                                .foregroundColor(.white)
-                            Spacer()
-                            Text("現在のスイング角度:")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(String(format: "%.1f°", detector.currentAngleDegrees))
-                                .font(.caption2.monospacedDigit().bold())
-                                .foregroundColor(.cyan)
+                        // リアルタイムシンクロ率インジケーター（X:距離安定、Y:往復時間短縮）
+                        VStack(spacing: 6) {
+                            HStack {
+                                HStack(spacing: 4) {
+                                    Text("往復時間 (Y):")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text(String(format: "%.2f 秒", detector.roundTripDuration))
+                                        .font(.caption2.monospacedDigit().bold())
+                                        .foregroundColor(.cyan)
+                                    if detector.isRealtimeOverheadSync {
+                                        Text("頭上同期⚡️")
+                                            .font(.system(size: 8).bold())
+                                            .foregroundColor(.yellow)
+                                    }
+                                }
+                                Spacer()
+                                HStack(spacing: 4) {
+                                    Text("スイング振れ幅 (X):")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text(String(format: "%.1f° (一定)", detector.strokeAngleRange))
+                                        .font(.caption2.monospacedDigit().bold())
+                                        .foregroundColor(.green)
+                                }
+                            }
+                            
+                            HStack {
+                                Text("リアルタイム角速度:")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.2f rad/s", detector.currentGyroZ))
+                                    .font(.caption2.monospacedDigit().bold())
+                                    .foregroundColor(.white)
+                                Spacer()
+                                Text("周波数:")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Text(String(format: "%.1f Hz", detector.swingFrequencyHz))
+                                    .font(.caption2.monospacedDigit().bold())
+                                    .foregroundColor(.yellow)
+                            }
                         }
                         .padding(.horizontal, 4)
+                        .padding(.top, 2)
                     }
                     .padding()
                     .background(RoundedRectangle(cornerRadius: 16).fill(Color(white: 0.08)))
@@ -305,8 +333,11 @@ public struct SamplingView: View {
                 }
             }
             .onReceive(timer) { _ in
-                // 教師データの光る球を一定リズムで周回（周期約0.9秒）
-                orbPhase += 0.070
+                // ユーザーのリアルタイム往復時間（Y）に同期して光る球の速度がリアルタイム適応
+                // 頭上で速く振ると往復時間が短縮され、球の周回テンポが自動で同期加速
+                let duration = max(detector.roundTripDuration, 0.20)
+                let step = (2.0 * Double.pi) / (duration * 60.0)
+                orbPhase += step
                 if orbPhase > Double.pi * 2 {
                     orbPhase -= Double.pi * 2
                 }

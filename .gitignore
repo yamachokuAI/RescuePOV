@@ -3,3 +3,4 @@ xcuserdata/
 DerivedData/
 *.xcuserstate
 project.xcworkspace/xcuserdata/
+build/
