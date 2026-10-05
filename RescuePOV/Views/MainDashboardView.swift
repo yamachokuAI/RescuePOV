@@ -33,6 +33,7 @@ public struct MainDashboardView: View {
     @State private var isShowingPOV: Bool = false
     @State private var isShowingHelp: Bool = false
     @State private var isShowingSettings: Bool = false
+    @State private var isShowingTraining: Bool = false
     
     @ObservedObject private var motionDetector = MotionDetector.shared
     @ObservedObject private var voiceService = VoiceRescueService.shared
@@ -109,7 +110,22 @@ public struct MainDashboardView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 14) {
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            isShowingTraining = true
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "waveform.path.ecg")
+                                Text("練習")
+                                    .font(.caption2.bold())
+                            }
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.cyan.opacity(0.18)))
+                        }
+                        
                         Button(action: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             isShowingSettings = true
@@ -135,6 +151,9 @@ public struct MainDashboardView: View {
             }
             .sheet(isPresented: $isShowingSettings) {
                 quickSettingsSheet
+            }
+            .sheet(isPresented: $isShowingTraining) {
+                SamplingView()
             }
             .onAppear {
                 motionDetector.start(direction: selectedDirection)
@@ -548,20 +567,30 @@ public struct MainDashboardView: View {
                     }
                 }
                 
-                Section(header: Text("緊急救難SOSメール自動配信")) {
+                Section(header: Text("緊急救難SOSメール自動配信（Google連携）")) {
+                    HStack {
+                        Image(systemName: "person.crop.circle.fill")
+                            .foregroundColor(.green)
+                        Text("送信元Google")
+                        Spacer()
+                        Text(cloudService.senderGmail)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    
                     HStack {
                         Image(systemName: "envelope.badge.shield.half.filled.fill")
                             .foregroundColor(.red)
-                        Text("緊急送信先")
+                        Text("通知先（ご家族等）")
                         Spacer()
-                        TextField("メールアドレス", text: $cloudService.emergencyRecipientEmail)
+                        TextField("例: family@example.com", text: $cloudService.emergencyRecipientEmail)
                             .multilineTextAlignment(.trailing)
                             .foregroundColor(.cyan)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
                     }
                     
-                    Text("※SOS起動または携帯を頭上で振ると、このアドレス宛てに【暗号化されたリアルタイムGPS地図リンク】と【ワンタイムパスコード】がGoogle公式SMTPから自動送信されます。")
+                    Text("※SOS発動時、通知先（ご家族宛て）に【暗号化されたリアルタイムGPS地図リンク】と【ワンタイム合鍵】が自動送信されます。送信元（ご本人Gmail）にも控えが自動送信されます。")
                         .font(.caption2)
                         .foregroundColor(.gray)
                 }

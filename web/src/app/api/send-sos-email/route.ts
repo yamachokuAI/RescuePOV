@@ -85,9 +85,14 @@ export async function POST(request: Request) {
         }
       });
 
+      // 宛先リスト（緊急連絡先 + 本人控え）
+      const primaryRecipient = toEmail && toEmail.trim().length > 0 ? toEmail.trim() : gmailUser;
+      const ccRecipient = (primaryRecipient !== gmailUser) ? gmailUser : undefined;
+
       const info = await transporter.sendMail({
         from: `"RescuePOV 緊急通知" <${gmailUser}>`,
-        to: toEmail || gmailUser,
+        to: primaryRecipient,
+        cc: ccRecipient,
         subject: `【緊急SOS】救援要請が発生しました（パスコード: ${passcode}）`,
         html: emailHtml
       });

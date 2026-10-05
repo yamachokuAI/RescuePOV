@@ -18,7 +18,10 @@ public final class SupabaseCloudService: ObservableObject {
     @Published public var isEmailSent: Bool = false
     @Published public var lastGeneratedPasscode: String = ""
     
-    // 緊急送信先メールアドレス（デフォルトはユーザー本人のGmail）
+    // 送信元Googleアカウント（認証用）
+    public let senderGmail: String = "naohiko.yamada@gmail.com"
+    
+    // 緊急通知先メールアドレス（ご家族・連絡先）
     @Published public var emergencyRecipientEmail: String {
         didSet {
             UserDefaults.standard.set(emergencyRecipientEmail, forKey: "emergency_recipient_email")
@@ -34,7 +37,8 @@ public final class SupabaseCloudService: ObservableObject {
         if let savedEmail = UserDefaults.standard.string(forKey: "emergency_recipient_email"), !savedEmail.isEmpty {
             self.emergencyRecipientEmail = savedEmail
         } else {
-            self.emergencyRecipientEmail = "naohiko.yamada@gmail.com"
+            // 初期状態は空文字または緊急連絡先設定を促す
+            self.emergencyRecipientEmail = ""
         }
         
         if let vendorId = UIDevice.current.identifierForVendor?.uuidString {
@@ -129,8 +133,12 @@ public final class SupabaseCloudService: ObservableObject {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
+        let finalRecipient = (!emergencyRecipientEmail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            ? emergencyRecipientEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+            : senderGmail
+        
         let body: [String: Any?] = [
-            "toEmail": emergencyRecipientEmail,
+            "toEmail": finalRecipient,
             "recipientName": "ご家族・緊急連絡先",
             "passcode": passcode,
             "latitude": latitude,

@@ -280,26 +280,26 @@ public final class MotionDetector: ObservableObject {
         currentTheta += (gyro + lastGyroZ) * 0.5 * dt
         self.currentAngleDegrees = currentTheta * (180.0 / .pi)
         
-        // 3. 折り返し（ゼロクロス）の検出（ヒステリシス強化版）
-        // 手首30cmモード時は、スイング途中の筋振動によるゼロクロス誤検知（特定箇所への文字重なりバグ）を防止するため
-        // 確実に方向反転が起きたこと（角速度の不感帯ヒステリシス）を確認してから折り返しを確定
+        // 3. 折り返し（ゼロクロス）の検出（超高速レスポンス版）
+        // 手首30cmモード時は、手首の素早い「返し」（4〜8Hz、往復0.12〜0.2秒）に遅延ゼロで瞬時追従するため
+        // 不感帯ヒステリシスを極小の0.08rad/sに設定し、ゼロクロス直後に即座に折り返しを確定
         let isCompact = (activeRangeMode == .compactSnap)
-        let turnHysteresis = isCompact ? 0.35 : 0.08
+        let turnHysteresis = isCompact ? 0.08 : 0.06
         
         if currentPhase == .backward && gyro > turnHysteresis && lastGyroZ <= turnHysteresis {
-            // 左端到達 → 正方向（往路）への確実な反転
+            // 左端到達 → 正方向（往路）への瞬時反転
             handleTurnaround(isMovingPositive: true, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
         } else if currentPhase == .forward && gyro < -turnHysteresis && lastGyroZ >= -turnHysteresis {
-            // 右端到達 → 負方向（復路）への確実な反転
+            // 右端到達 → 負方向（復路）への瞬時反転
             handleTurnaround(isMovingPositive: false, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
         }
         
         // 4. 【疲労適応 ＆ 全文字空間ワイド展開】
-        // 30cm手首モード時は手首の狭い振れ幅（0.20〜0.45rad=約11〜26度）に完全追従。ワイドモード時は0.45〜2.2rad。
-        let minClampWidth = isCompact ? 0.20 : 0.45
-        let maxClampWidth = isCompact ? 0.48 : 2.40
+        // 30cm手首モード時は手首の狭い振れ幅（0.18〜0.40rad=約10〜23度）に超高感度追従。ワイドモード時は0.45〜2.2rad。
+        let minClampWidth = isCompact ? 0.18 : 0.45
+        let maxClampWidth = isCompact ? 0.42 : 2.40
         let width = min(max(learnedStrokeWidth * strokeSensitivity, minClampWidth), maxClampWidth)
-        let minEmitSpeed = isCompact ? 0.12 : 0.20 // 手首の微小スイングでも即座に発光
+        let minEmitSpeed = isCompact ? 0.06 : 0.16 // 手首を返した瞬間の初速でも即座に発光開始
         
         if gyro > minEmitSpeed {
             // 往路（左から右へのスイング）: swingStartTheta(左端)からの進行
@@ -333,25 +333,25 @@ public final class MotionDetector: ObservableObject {
         let interval = now.timeIntervalSince(lastTurnTime)
         let isCompact = (activeRangeMode == .compactSnap)
         
-        // 手首スナップ（4〜6Hzの超高速往復）に完全追従する動的チャタリング防止インターバル
+        // 手首スナップ（4〜8Hzの超高速往復）に完全追従する極小インターバル（20ms〜）
         let dynamicMinInterval = isCompact
-            ? max(0.045, min(0.11, 0.32 / max(abs(currentGyro), 1.0)))
-            : max(0.060, min(0.16, 0.48 / max(abs(currentGyro), 1.0)))
+            ? max(0.020, min(0.065, 0.18 / max(abs(currentGyro), 1.0)))
+            : max(0.050, min(0.14, 0.45 / max(abs(currentGyro), 1.0)))
         guard interval > dynamicMinInterval else { return }
         
         // リアルタイム往復時間（Y: 往復時間）の計測と更新
         let halfDuration = interval
         let measuredRoundTrip = halfDuration * 2.0
-        if measuredRoundTrip >= 0.08 && measuredRoundTrip <= 2.5 {
+        if measuredRoundTrip >= 0.06 && measuredRoundTrip <= 2.5 {
             let alpha = measuredRoundTrip < self.roundTripDuration ? 0.60 : 0.40
             self.roundTripDuration = self.roundTripDuration * (1.0 - alpha) + measuredRoundTrip * alpha
-            self.swingFrequencyHz = 1.0 / max(self.roundTripDuration, 0.08)
+            self.swingFrequencyHz = 1.0 / max(self.roundTripDuration, 0.06)
         }
         
         lastTurnTime = now
         
-        let minAllowedWidth = isCompact ? 0.16 : 0.38
-        let maxAllowedWidth = isCompact ? 0.52 : 2.50
+        let minAllowedWidth = isCompact ? 0.14 : 0.38
+        let maxAllowedWidth = isCompact ? 0.46 : 2.50
         
         if isMovingPositive {
             // 「右→左」から「左→右」への切り返し（左端に到達！往路スタート）

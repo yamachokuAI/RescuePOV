@@ -62,6 +62,7 @@ public struct POVFullscreenView: View {
     @State private var showInitialGuide: Bool = true
     @State private var isTestFlash: Bool = false
     @State private var hasTriggeredEmergency: Bool = false
+    @State private var isShowingTrainingSheet: Bool = false
     
     // 超爆光スリット幅（ワイド140px・30cm手首24pxに内部自動適応）
     private let slitWidth: CGFloat = 140.0
@@ -130,6 +131,9 @@ public struct POVFullscreenView: View {
             }
         }
         .statusBar(hidden: true)
+        .sheet(isPresented: $isShowingTrainingSheet) {
+            SamplingView()
+        }
         .onAppear {
             setupOnAppear()
         }
@@ -257,138 +261,169 @@ public struct POVFullscreenView: View {
     }
     
     @ViewBuilder
-    private var bottomControlPanel: some View {
-        VStack(spacing: 12) {
-            // 疲労対応・振れ幅セレクター
-            VStack(alignment: .leading, spacing: 6) {
+    private var rangeModeCard: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "figure.walk.motion")
+                    .foregroundColor(.cyan)
+                Text("疲労対応・振れ幅モード")
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                Spacer()
+                Text(motionDetector.activeRangeMode.shortTitle)
+                    .font(.system(size: 9.5).bold())
+                    .foregroundColor(.cyan)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.cyan.opacity(0.2)))
+            }
+            
+            Picker("振れ幅モード", selection: $motionDetector.selectedRangeMode) {
+                ForEach(POVDisplayRangeMode.allCases) { mode in
+                    Text(mode.shortTitle).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            
+            Text(motionDetector.selectedRangeMode.description)
+                .font(.system(size: 9))
+                .foregroundColor(.white.opacity(0.8))
+                .lineLimit(2)
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.cyan.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
+    }
+    
+    @ViewBuilder
+    private var safetyCard: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: motionDetector.isUpsideDown ? "arrow.up.and.down.circle.fill" : "hand.raised.slash.fill")
+                .foregroundColor(motionDetector.isUpsideDown ? .green : .orange)
+                .font(.title3)
+            
+            VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                    Image(systemName: "figure.walk.motion")
-                        .foregroundColor(.cyan)
-                    Text("疲労対応・振れ幅モード")
+                    Text("電源ボタン誤押し対策（実機セーフティ）")
                         .font(.caption.bold())
                         .foregroundColor(.white)
                     Spacer()
-                    Text(motionDetector.activeRangeMode.shortTitle)
-                        .font(.system(size: 9.5).bold())
-                        .foregroundColor(.cyan)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.cyan.opacity(0.2)))
-                }
-                
-                Picker("振れ幅モード", selection: $motionDetector.selectedRangeMode) {
-                    ForEach(POVDisplayRangeMode.allCases) { mode in
-                        Text(mode.shortTitle).tag(mode)
+                    if motionDetector.isUpsideDown {
+                        Text("上下逆さま検知中 (180°自動正立)")
+                            .font(.system(size: 9.5).bold())
+                            .foregroundColor(.green)
                     }
                 }
-                .pickerStyle(.segmented)
                 
-                Text(motionDetector.selectedRangeMode.description)
-                    .font(.system(size: 9))
-                    .foregroundColor(.white.opacity(0.8))
-                    .lineLimit(2)
+                Text("① iPhoneを【上下逆さま】（充電口を上）にして左右を握ると、サイドボタンに触れずに安全に振れます。\n② 設定 > アクセシビリティ >「アクセスガイド」をトリプルクリックで開始すると、サイドボタンをOSレベルで完全無効化できます。")
+                    .font(.system(size: 9.5))
+                    .foregroundColor(.white.opacity(0.85))
+                    .lineSpacing(2)
             }
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.cyan.opacity(0.12)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.15)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.35), lineWidth: 1))
+    }
+    
+    @ViewBuilder
+    private var emailStatusCard: some View {
+        HStack(spacing: 10) {
+            Image(systemName: cloudService.isEmailSent ? "envelope.badge.shield.half.filled.fill" : (cloudService.isSyncing ? "arrow.triangle.2.circlepath" : "envelope.fill"))
+                .font(.title3)
+                .foregroundColor(cloudService.isEmailSent ? .green : (cloudService.isSyncing ? .yellow : .orange))
             
-            Divider().background(Color.white.opacity(0.15))
-            
-            // 電源ボタン誤押し対策カード
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: motionDetector.isUpsideDown ? "arrow.up.and.down.circle.fill" : "hand.raised.slash.fill")
-                    .foregroundColor(motionDetector.isUpsideDown ? .green : .orange)
-                    .font(.title3)
-                
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack {
-                        Text("電源ボタン誤押し対策（実機セーフティ）")
-                            .font(.caption.bold())
-                            .foregroundColor(.white)
-                        Spacer()
-                        if motionDetector.isUpsideDown {
-                            Text("上下逆さま検知中 (180°自動正立)")
-                                .font(.system(size: 9.5).bold())
-                                .foregroundColor(.green)
-                        }
-                    }
-                    
-                    Text("① iPhoneを【上下逆さま】（充電口を上）にして左右を握ると、サイドボタンに触れずに安全に振れます。\n② 設定 > アクセシビリティ >「アクセスガイド」をトリプルクリックで開始すると、サイドボタンをOSレベルで完全無効化できます。")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(.white.opacity(0.85))
-                        .lineSpacing(2)
-                }
-            }
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.15)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.35), lineWidth: 1))
-            
-            Divider().background(Color.white.opacity(0.15))
-            
-            // 緊急SOSメール発信 ＆ クラウド救援ステータスカード
-            HStack(spacing: 10) {
-                Image(systemName: cloudService.isEmailSent ? "envelope.badge.shield.half.filled.fill" : (cloudService.isSyncing ? "arrow.triangle.2.circlepath" : "envelope.fill"))
-                    .font(.title3)
-                    .foregroundColor(cloudService.isEmailSent ? .green : (cloudService.isSyncing ? .yellow : .orange))
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text(cloudService.isEmailSent ? "緊急SOSメール送信完了" : (cloudService.isSyncing ? "救難信号・メール発信中..." : "救難メール待機中"))
-                            .font(.caption.bold())
-                            .foregroundColor(.white)
-                        Spacer()
-                        if !cloudService.lastGeneratedPasscode.isEmpty {
-                            Text("🔑 \(cloudService.lastGeneratedPasscode)")
-                                .font(.system(size: 10, weight: .black, design: .monospaced))
-                                .foregroundColor(.yellow)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(Color.yellow.opacity(0.2)))
-                        }
-                    }
-                    
-                    Text("宛先: \(cloudService.emergencyRecipientEmail)（暗号合鍵付きGPS地図リンク送信済み）")
-                        .font(.system(size: 9))
-                        .foregroundColor(.white.opacity(0.75))
-                        .lineLimit(1)
-                }
-            }
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.15)))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.red.opacity(0.35), lineWidth: 1))
-            
-            Divider().background(Color.white.opacity(0.15))
-            
-            // リアルタイムステータス ＆ 頭上同期モニター
-            VStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Circle()
-                        .fill(motionDetector.isEmitting ? Color.green : Color.gray)
-                        .frame(width: 8, height: 8)
-                    
-                    Text(motionDetector.isEmitting ? "往復同期発光中" : "端部減速・消灯中")
-                        .font(.caption2.bold())
-                        .foregroundColor(.white.opacity(0.9))
-                    
+                    Text(cloudService.isEmailSent ? "緊急SOSメール送信完了" : (cloudService.isSyncing ? "救難信号・メール発信中..." : "救難メール待機中"))
+                        .font(.caption.bold())
+                        .foregroundColor(.white)
                     Spacer()
-                    
-                    if motionDetector.isRealtimeOverheadSync {
-                        Text("頭上リアルタイム同期中⚡️")
-                            .font(.system(size: 9).bold())
+                    if !cloudService.lastGeneratedPasscode.isEmpty {
+                        Text("🔑 \(cloudService.lastGeneratedPasscode)")
+                            .font(.system(size: 10, weight: .black, design: .monospaced))
                             .foregroundColor(.yellow)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.yellow.opacity(0.2)))
                     }
                 }
                 
-                HStack {
-                    Text(String(format: "往復時間(Y): %.2fs ｜ 周波数: %.1fHz", motionDetector.roundTripDuration, motionDetector.swingFrequencyHz))
-                        .font(.system(size: 9.5).monospacedDigit().bold())
-                        .foregroundColor(.cyan)
-                    Spacer()
-                    Text(String(format: "振れ幅(X): %.0f° (位置: %.0f%%)", motionDetector.strokeAngleRange, motionDetector.strokeProgress * 100.0))
-                        .font(.system(size: 9.5).monospacedDigit())
-                        .foregroundColor(.green)
+                Text("通知先: \(cloudService.emergencyRecipientEmail.isEmpty ? cloudService.senderGmail + " (未登録のため本人控え)" : cloudService.emergencyRecipientEmail)（暗号合鍵付きGPS地図リンク送信済み）")
+                    .font(.system(size: 9))
+                    .foregroundColor(.white.opacity(0.75))
+                    .lineLimit(1)
+            }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.15)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.red.opacity(0.35), lineWidth: 1))
+    }
+    
+    @ViewBuilder
+    private var motionMonitorCard: some View {
+        VStack(spacing: 4) {
+            HStack {
+                Circle()
+                    .fill(motionDetector.isEmitting ? Color.green : Color.gray)
+                    .frame(width: 8, height: 8)
+                
+                Text(motionDetector.isEmitting ? "往復同期発光中" : "端部減速・消灯中")
+                    .font(.caption2.bold())
+                    .foregroundColor(.white.opacity(0.9))
+                
+                Spacer()
+                
+                if motionDetector.isRealtimeOverheadSync {
+                    Text("頭上リアルタイム同期中⚡️")
+                        .font(.system(size: 9).bold())
+                        .foregroundColor(.yellow)
                 }
             }
+            
+            HStack {
+                Text(String(format: "往復時間(Y): %.2fs ｜ 周波数: %.1fHz", motionDetector.roundTripDuration, motionDetector.swingFrequencyHz))
+                    .font(.system(size: 9.5).monospacedDigit().bold())
+                    .foregroundColor(.cyan)
+                Spacer()
+                Text(String(format: "振れ幅(X): %.0f° (位置: %.0f%%)", motionDetector.strokeAngleRange, motionDetector.strokeProgress * 100.0))
+                    .font(.system(size: 9.5).monospacedDigit())
+                    .foregroundColor(.green)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var trainingButton: some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            isShowingTrainingSheet = true
+        }) {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.path.ecg")
+                Text("スイング同期練習モード（光の玉＆全画面パルス）")
+                    .font(.caption.bold())
+            }
+            .foregroundColor(.cyan)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.cyan.opacity(0.15)))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
+        }
+    }
+    
+    @ViewBuilder
+    private var bottomControlPanel: some View {
+        VStack(spacing: 12) {
+            rangeModeCard
+            Divider().background(Color.white.opacity(0.15))
+            safetyCard
+            Divider().background(Color.white.opacity(0.15))
+            emailStatusCard
+            Divider().background(Color.white.opacity(0.15))
+            motionMonitorCard
+            Divider().background(Color.white.opacity(0.15))
+            trainingButton
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 18).fill(Color(white: 0.12, opacity: 0.94)))
