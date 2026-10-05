@@ -51,6 +51,7 @@ public struct SamplingView: View {
                 handleTimerTick()
             }
             .onAppear {
+                practiceRangeMode = (detector.selectedRangeMode == .compactSnap) ? .compactSnap : .wide
                 detector.start(direction: .horizontal)
             }
         }
@@ -105,21 +106,49 @@ public struct SamplingView: View {
                 .foregroundColor(.white.opacity(0.85))
                 .lineSpacing(3)
             
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("練習するスイングモード:")
-                    .font(.caption2.bold())
+                    .font(.caption.bold())
                     .foregroundColor(.cyan)
                 
-                Picker("練習モード", selection: $practiceRangeMode) {
-                    Text("頭上ワイド大振り").tag(POVDisplayRangeMode.wide)
-                    Text("手首30cmスナップ").tag(POVDisplayRangeMode.compactSnap)
+                HStack(spacing: 8) {
+                    practiceModeButton(title: "頭上ワイド大振り", mode: .wide)
+                    practiceModeButton(title: "手首30cmスナップ", mode: .compactSnap)
                 }
-                .pickerStyle(.segmented)
             }
             .padding(.top, 4)
         }
         .padding()
         .background(RoundedRectangle(cornerRadius: 16).fill(Color(white: 0.12)))
+    }
+    
+    @ViewBuilder
+    private func practiceModeButton(title: String, mode: POVDisplayRangeMode) -> some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            practiceRangeMode = mode
+            detector.selectedRangeMode = mode
+        }) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(practiceRangeMode == mode ? Color.cyan : Color.clear)
+                    .frame(width: 8, height: 8)
+                Text(title)
+                    .font(.subheadline.bold())
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(practiceRangeMode == mode ? Color.cyan.opacity(0.25) : Color.white.opacity(0.10))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(practiceRangeMode == mode ? Color.cyan : Color.white.opacity(0.15), lineWidth: 1.5)
+            )
+            .foregroundColor(practiceRangeMode == mode ? .cyan : .white)
+        }
+        .buttonStyle(.plain)
     }
     
     @ViewBuilder

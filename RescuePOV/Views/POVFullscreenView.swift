@@ -107,6 +107,20 @@ public struct POVFullscreenView: View {
             )
             .ignoresSafeArea()
             
+            // 背景タップ専用透明レイヤー（コントロールパネルの裏側に配置）
+            Color.clear
+                .contentShape(Rectangle())
+                .ignoresSafeArea()
+                .onTapGesture {
+                    if showInitialGuide {
+                        withAnimation { showInitialGuide = false }
+                    } else {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            manualShowControls.toggle()
+                        }
+                    }
+                }
+            
             // テスト発光フラッシュオーバーレイ
             if isTestFlash {
                 Color.white.ignoresSafeArea()
@@ -115,20 +129,14 @@ public struct POVFullscreenView: View {
             // 突入時の初期ガイド
             if showInitialGuide && !motionDetector.isMotionActive {
                 initialGuideOverlay
+                    .onTapGesture {
+                        withAnimation { showInitialGuide = false }
+                    }
             }
             
-            // 操作UIオーバーレイ
-            controlsOverlay
-        }
-        .contentShape(Rectangle())
-        .allowsHitTesting(isControlsVisible || showInitialGuide)
-        .onTapGesture {
-            if showInitialGuide {
-                withAnimation { showInitialGuide = false }
-            } else {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    manualShowControls.toggle()
-                }
+            // 操作UIオーバーレイ（コントロールパネル自身のタップを100%確実に処理）
+            if isControlsVisible {
+                controlsOverlay
             }
         }
         .statusBar(hidden: true)
@@ -263,7 +271,7 @@ public struct POVFullscreenView: View {
     
     @ViewBuilder
     private var rangeModeCard: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "figure.walk.motion")
                     .foregroundColor(.cyan)
@@ -279,19 +287,36 @@ public struct POVFullscreenView: View {
                     .background(Capsule().fill(Color.cyan.opacity(0.2)))
             }
             
-            Picker("振れ幅モード", selection: $motionDetector.selectedRangeMode) {
+            // 振れ幅モード切替ボタン（確実に反応する高感度ボタン）
+            HStack(spacing: 4) {
                 ForEach(POVDisplayRangeMode.allCases) { mode in
-                    Text(mode.shortTitle).tag(mode)
+                    Button(action: {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        motionDetector.selectedRangeMode = mode
+                        rebuildSlices()
+                    }) {
+                        Text(mode.shortTitle)
+                            .font(.system(size: 9.5, weight: .bold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(motionDetector.selectedRangeMode == mode ? Color.cyan : Color.white.opacity(0.12))
+                            )
+                            .foregroundColor(motionDetector.selectedRangeMode == mode ? .black : .white)
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .pickerStyle(.segmented)
             
             Text(motionDetector.selectedRangeMode.description)
                 .font(.system(size: 9))
                 .foregroundColor(.white.opacity(0.8))
                 .lineLimit(2)
             
-            // 文字間隔セレクター（ユーザー実験・リアルタイム切替用）
+            Divider().background(Color.white.opacity(0.15))
+            
+            // 文字間隔セレクター（確実に反応する高感度ボタン）
             HStack(spacing: 6) {
                 Image(systemName: "arrow.left.and.line.vertical.and.arrow.right")
                     .font(.system(size: 10))
@@ -300,21 +325,38 @@ public struct POVFullscreenView: View {
                     .font(.system(size: 10).bold())
                     .foregroundColor(.yellow)
                 
-                Picker("文字間隔", selection: $letterSpacingSetting) {
-                    Text("超密着 (0)").tag(0)
-                    Text("最小 (1)").tag(1)
-                    Text("標準 (2)").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: letterSpacingSetting) { _, _ in
-                    rebuildSlices()
+                Spacer()
+                
+                HStack(spacing: 4) {
+                    letterSpacingButton(title: "超密着(0)", spacing: 0)
+                    letterSpacingButton(title: "最小(1)", spacing: 1)
+                    letterSpacingButton(title: "標準(2)", spacing: 2)
                 }
             }
-            .padding(.top, 2)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.cyan.opacity(0.12)))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
+    }
+    
+    @ViewBuilder
+    private func letterSpacingButton(title: String, spacing: Int) -> some View {
+        Button(action: {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            letterSpacingSetting = spacing
+            rebuildSlices()
+        }) {
+            Text(title)
+                .font(.system(size: 9.5, weight: .bold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(letterSpacingSetting == spacing ? Color.yellow : Color.white.opacity(0.12))
+                )
+                .foregroundColor(letterSpacingSetting == spacing ? .black : .white)
+        }
+        .buttonStyle(.plain)
     }
     
     @ViewBuilder
