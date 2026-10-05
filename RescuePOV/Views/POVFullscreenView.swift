@@ -63,6 +63,7 @@ public struct POVFullscreenView: View {
     @State private var isTestFlash: Bool = false
     @State private var hasTriggeredEmergency: Bool = false
     @State private var isShowingTrainingSheet: Bool = false
+    @State private var letterSpacingSetting: Int = 0 // 0: 超密着, 1: 最小, 2: 標準
     
     // 超爆光スリット幅（ワイド140px・30cm手首24pxに内部自動適応）
     private let slitWidth: CGFloat = 140.0
@@ -289,6 +290,27 @@ public struct POVFullscreenView: View {
                 .font(.system(size: 9))
                 .foregroundColor(.white.opacity(0.8))
                 .lineLimit(2)
+            
+            // 文字間隔セレクター（ユーザー実験・リアルタイム切替用）
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left.and.line.vertical.and.arrow.right")
+                    .font(.system(size: 10))
+                    .foregroundColor(.yellow)
+                Text("文字間隔:")
+                    .font(.system(size: 10).bold())
+                    .foregroundColor(.yellow)
+                
+                Picker("文字間隔", selection: $letterSpacingSetting) {
+                    Text("超密着 (0)").tag(0)
+                    Text("最小 (1)").tag(1)
+                    Text("標準 (2)").tag(2)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: letterSpacingSetting) { _, _ in
+                    rebuildSlices()
+                }
+            }
+            .padding(.top, 2)
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.cyan.opacity(0.12)))
@@ -513,10 +535,12 @@ public struct POVFullscreenView: View {
         self.slices = BitmapGenerator.shared.generateSlices(
             text: currentText,
             direction: direction,
-            targetSlices: isCondensed ? 24 : 36, // 30cm手首モード時は空間凝縮24スライス
+            targetSlices: isCondensed ? 20 : 32, // 空間凝縮
             sliceResolution: 28,
             mirrorForViewer: mirrorForViewer,
-            isCondensed: isCondensed
+            isCondensed: isCondensed,
+            letterSpacing: letterSpacingSetting,
+            edgeMargin: 0 // 頂点の真っ暗ゾーンを完全撤廃
         )
     }
     

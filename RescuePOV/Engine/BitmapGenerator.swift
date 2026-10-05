@@ -85,14 +85,18 @@ public final class BitmapGenerator {
     }
     
     /// テキストを2次元ブール配列（スライスのリスト）に変換します
-    /// - Parameter isCondensed: 30cm手首スナップ用。文字幅をギュッと縦長スリムに凝縮し、狭い空間にクッキリ収める
+    /// - Parameters:
+    ///   - letterSpacing: 文字間隔（nil時は手首モード=0, 通常モード=1ドットに自動超圧縮）
+    ///   - edgeMargin: 頂点・端部の余白スライス数（デフォルト0: 頂点の真っ暗ゾーンを完全撤廃）
     public func generateSlices(
         text: String,
         direction: POVDirection,
         targetSlices: Int = 48,
         sliceResolution: Int = 20,
         mirrorForViewer: Bool = true,
-        isCondensed: Bool = false
+        isCondensed: Bool = false,
+        letterSpacing: Int? = nil,
+        edgeMargin: Int = 0
     ) -> [[Bool]] {
         guard !text.isEmpty else {
             return Array(repeating: Array(repeating: false, count: sliceResolution), count: targetSlices)
@@ -100,6 +104,7 @@ public final class BitmapGenerator {
         
         let upper = text.uppercased()
         let canUseDotFont = upper.allSatisfy { dotFont[$0] != nil }
+        let effectiveSpacing = letterSpacing ?? (isCondensed ? 0 : 1)
         
         if canUseDotFont {
             return generateFromDotFont(
@@ -108,7 +113,9 @@ public final class BitmapGenerator {
                 targetSlices: targetSlices,
                 sliceResolution: sliceResolution,
                 mirrorForViewer: mirrorForViewer,
-                isCondensed: isCondensed
+                isCondensed: isCondensed,
+                letterSpacing: effectiveSpacing,
+                edgeMargin: edgeMargin
             )
         } else {
             return generateFromRaster(
@@ -117,31 +124,33 @@ public final class BitmapGenerator {
                 targetSlices: targetSlices,
                 sliceResolution: sliceResolution,
                 mirrorForViewer: mirrorForViewer,
-                isCondensed: isCondensed
+                isCondensed: isCondensed,
+                letterSpacing: effectiveSpacing,
+                edgeMargin: edgeMargin
             )
         }
     }
     
-    /// ドットフォントによる確実なシャープ描画（文字潰れ・白残像ゼロ）
+    /// ドットフォントによる確実なシャープ描画（文字潰れ・白残像ゼロ ＆ 頂点暗黒ゾーン撤廃）
     private func generateFromDotFont(
         text: String,
         direction: POVDirection,
         targetSlices: Int,
         sliceResolution: Int,
         mirrorForViewer: Bool,
-        isCondensed: Bool
+        isCondensed: Bool,
+        letterSpacing: Int,
+        edgeMargin: Int
     ) -> [[Bool]] {
         var rawCols: [[Bool]] = []
         
-        // 30cm手首スナップ用: マージンと文字間を極限まで引き締める
-        let marginCols = isCondensed ? 1 : 4
-        let spaceCols = isCondensed ? 1 : 3
-        
-        for _ in 0..<marginCols {
+        // 頂点の真っ暗な部分を完全撤廃（デフォルト0列）
+        for _ in 0..<edgeMargin {
             rawCols.append([Bool](repeating: false, count: 7))
         }
         
-        for char in text {
+        let chars = Array(text)
+        for (charIndex, char) in chars.enumerated() {
             if let pattern = dotFont[char] {
                 // 30cm手首スナップ用: 5列パターンから[先頭, 中央, 末尾]の3列を抽出し、超スリム縦長フォント化
                 let activePattern: [UInt8]
@@ -162,15 +171,17 @@ public final class BitmapGenerator {
                     rawCols.append(colDots)
                 }
                 
-                // 文字間スペース（30cm手首用は1列に凝縮）
-                for _ in 0..<spaceCols {
-                    rawCols.append([Bool](repeating: false, count: 7))
+                // 文字間スペース（最後の文字の後には挟まないことで頂点の暗黒化を完全防止）
+                if charIndex < chars.count - 1 {
+                    for _ in 0..<letterSpacing {
+                        rawCols.append([Bool](repeating: false, count: 7))
+                    }
                 }
             }
         }
         
-        // 後方マージン
-        for _ in 0..<marginCols {
+        // 後方マージン（デフォルト0列）
+        for _ in 0..<edgeMargin {
             rawCols.append([Bool](repeating: false, count: 7))
         }
         
@@ -200,12 +211,14 @@ public final class BitmapGenerator {
         targetSlices: Int,
         sliceResolution: Int,
         mirrorForViewer: Bool,
-        isCondensed: Bool
+        isCondensed: Bool,
+        letterSpacing: Int,
+        edgeMargin: Int
     ) -> [[Bool]] {
         let charCount = max(text.count, 1)
-        // isCondensed時は1文字あたりのスライス幅を通常の約半分（8スライス）に凝縮
-        let slicePerChar = isCondensed ? 8 : 14
-        let dynamicWidth = max(targetSlices, charCount * slicePerChar + (isCondensed ? 4 : 10))
+        // 文字間隔を極限まで縮小
+        let slicePerChar = isCondensed ? 6 : (letterSpacing == 0 ? 8 : 10)
+        let dynamicWidth = max(targetSlices, charCount * slicePerChar + edgeMargin * 2)
         let width = dynamicWidth
         let height = sliceResolution
         
@@ -232,7 +245,7 @@ public final class BitmapGenerator {
         context.translateBy(x: 0, y: CGFloat(height))
         context.scaleBy(x: 1.0, y: -1.0)
         
-        let fontSize = CGFloat(height) * (isCondensed ? 0.90 : 0.78)
+        let fontSize = CGFloat(height) * (isCondensed ? 0.92 : 0.82)
         let font: UIFont
         if let hiragino = UIFont(name: "HiraginoSans-W8", size: fontSize) {
             font = hiragino
@@ -240,10 +253,11 @@ public final class BitmapGenerator {
             font = UIFont.systemFont(ofSize: fontSize, weight: .heavy)
         }
         
+        let kernValue: CGFloat = letterSpacing == 0 ? -1.2 : (letterSpacing == 1 ? 0.0 : 1.5)
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.white,
-            .kern: isCondensed ? 0.5 : 3.5
+            .kern: kernValue
         ]
         
         let attributedString = NSAttributedString(string: text, attributes: attributes)

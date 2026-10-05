@@ -294,33 +294,39 @@ public final class MotionDetector: ObservableObject {
             handleTurnaround(isMovingPositive: false, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
         }
         
-        // 4. 【疲労適応 ＆ 全文字空間ワイド展開】
-        // 30cm手首モード時は手首の狭い振れ幅（0.18〜0.40rad=約10〜23度）に超高感度追従。ワイドモード時は0.45〜2.2rad。
-        let minClampWidth = isCompact ? 0.18 : 0.45
-        let maxClampWidth = isCompact ? 0.42 : 2.40
+        // 4. 【頂点真っ暗ゾーン完全撤廃 ＆ 全文字空間ワイド展開】
+        // 30cm手首モード時は手首の狭い振れ幅（0.15〜0.45rad=約9〜25度）に超高感度追従。ワイドモード時は0.40〜2.4rad。
+        let minClampWidth = isCompact ? 0.15 : 0.40
+        let maxClampWidth = isCompact ? 0.45 : 2.40
         let width = min(max(learnedStrokeWidth * strokeSensitivity, minClampWidth), maxClampWidth)
-        let minEmitSpeed = isCompact ? 0.06 : 0.16 // 手首を返した瞬間の初速でも即座に発光開始
         
-        if gyro > minEmitSpeed {
-            // 往路（左から右へのスイング）: swingStartTheta(左端)からの進行
+        // 直近スイング活動中（往復中）判定: 最後の折り返しから1周期以内ならアクティブ
+        let isRecentlySwinging = now.timeIntervalSince(lastTurnTime) < max(self.roundTripDuration * 1.5, 0.45)
+        
+        if gyro > 0.02 || (currentPhase == .forward && isRecentlySwinging && gyro >= -turnHysteresis) {
+            // 往路（正方向）スイング中、または右端頂点への到達・折り返し瞬間
             self.currentPhase = .forward
             let strokeDelta = max(currentTheta - swingStartTheta, 0.0)
             let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
             
             self.isEmitting = true
-            self.strokeProgress = rawProgress // 0.0(H/Sの左端) 〜 1.0(P/Sの右端)まで欠けなく全域発光
+            self.strokeProgress = rawProgress // 0.0(左端) 〜 1.0(右端)まで欠けなく全域発光
             
-        } else if gyro < -minEmitSpeed {
-            // 復路（右から左へのスイング）: swingStartTheta(右端)からの進行
+        } else if gyro < -0.02 || (currentPhase == .backward && isRecentlySwinging && gyro <= turnHysteresis) {
+            // 復路（負方向）スイング中、または左端頂点への到達・折り返し瞬間
             self.currentPhase = .backward
             let strokeDelta = max(swingStartTheta - currentTheta, 0.0)
             let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
             
             self.isEmitting = true
-            self.strokeProgress = rawProgress // 0.0(P/Sの右端) 〜 1.0(H/Sの左端)まで欠けなく全域発光
+            self.strokeProgress = rawProgress // 0.0(右端) 〜 1.0(左端)まで欠けなく全域発光
             
+        } else if isRecentlySwinging {
+            // 頂点のゼロクロス極小瞬間（直前フェーズの端スライスを維持し、真っ暗な隙間を完全ゼロ化）
+            self.isEmitting = true
+            self.strokeProgress = (currentPhase == .forward) ? 1.0 : 0.0
         } else {
-            // 完全停止域（折り返しの極小瞬間）
+            // 完全静止域（手が本当に止まった時のみ消灯）
             self.isEmitting = false
             self.strokeProgress = 0.0
         }
