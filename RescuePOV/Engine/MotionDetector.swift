@@ -230,6 +230,11 @@ public final class MotionDetector: ObservableObject {
         // 手動選択されている場合はそのモードを強制適用
         if selectedRangeMode != .auto && activeRangeMode != selectedRangeMode {
             activeRangeMode = selectedRangeMode
+            // 30cm手首モードに切り替わった時は、手首の振れ幅（約18度=0.32rad）に即座にプリセット
+            if activeRangeMode == .compactSnap && (learnedStrokeWidth > 0.60 || learnedStrokeWidth < 0.18) {
+                learnedStrokeWidth = 0.32
+                strokeAngleRange = 18.3
+            }
         }
         
         if isQuiet {
@@ -275,18 +280,26 @@ public final class MotionDetector: ObservableObject {
         currentTheta += (gyro + lastGyroZ) * 0.5 * dt
         self.currentAngleDegrees = currentTheta * (180.0 / .pi)
         
-        // 3. 折り返し（ゼロクロス）の検出
-        // 高速頭上スイング時は角速度の閾値を動的適応させて瞬時に折り返しをキャッチ
-        let zeroThreshold = self.isRealtimeOverheadSync ? 0.08 : 0.05
-        if (lastGyroZ <= zeroThreshold && gyro > zeroThreshold) || (lastGyroZ >= -zeroThreshold && gyro < -zeroThreshold) {
-            handleTurnaround(isMovingPositive: gyro > 0, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
+        // 3. 折り返し（ゼロクロス）の検出（ヒステリシス強化版）
+        // 手首30cmモード時は、スイング途中の筋振動によるゼロクロス誤検知（特定箇所への文字重なりバグ）を防止するため
+        // 確実に方向反転が起きたこと（角速度の不感帯ヒステリシス）を確認してから折り返しを確定
+        let isCompact = (activeRangeMode == .compactSnap)
+        let turnHysteresis = isCompact ? 0.35 : 0.08
+        
+        if currentPhase == .backward && gyro > turnHysteresis && lastGyroZ <= turnHysteresis {
+            // 左端到達 → 正方向（往路）への確実な反転
+            handleTurnaround(isMovingPositive: true, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
+        } else if currentPhase == .forward && gyro < -turnHysteresis && lastGyroZ >= -turnHysteresis {
+            // 右端到達 → 負方向（復路）への確実な反転
+            handleTurnaround(isMovingPositive: false, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
         }
         
-        // 4. 【疲労適応 ＆ Hの左端からPの右端まで全域100%発光】
-        // 30cm手首モード時は手首の狭い振れ幅（最小0.15rad=約8.6度）に完全追従。ワイドモード時は0.38rad。
-        let minClampWidth = (activeRangeMode == .compactSnap) ? 0.15 : 0.38
-        let width = max(learnedStrokeWidth * strokeSensitivity, minClampWidth)
-        let minEmitSpeed = (activeRangeMode == .compactSnap) ? 0.08 : 0.15 // 手首の微小スイングでも即座に発光
+        // 4. 【疲労適応 ＆ 全文字空間ワイド展開】
+        // 30cm手首モード時は手首の狭い振れ幅（0.20〜0.45rad=約11〜26度）に完全追従。ワイドモード時は0.45〜2.2rad。
+        let minClampWidth = isCompact ? 0.20 : 0.45
+        let maxClampWidth = isCompact ? 0.48 : 2.40
+        let width = min(max(learnedStrokeWidth * strokeSensitivity, minClampWidth), maxClampWidth)
+        let minEmitSpeed = isCompact ? 0.12 : 0.20 // 手首の微小スイングでも即座に発光
         
         if gyro > minEmitSpeed {
             // 往路（左から右へのスイング）: swingStartTheta(左端)からの進行
@@ -295,7 +308,7 @@ public final class MotionDetector: ObservableObject {
             let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
             
             self.isEmitting = true
-            self.strokeProgress = rawProgress // 0.0(Hの左端) 〜 1.0(Pの右端)まで欠けなく全域発光
+            self.strokeProgress = rawProgress // 0.0(H/Sの左端) 〜 1.0(P/Sの右端)まで欠けなく全域発光
             
         } else if gyro < -minEmitSpeed {
             // 復路（右から左へのスイング）: swingStartTheta(右端)からの進行
@@ -304,7 +317,7 @@ public final class MotionDetector: ObservableObject {
             let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
             
             self.isEmitting = true
-            self.strokeProgress = rawProgress // 0.0(Pの右端) 〜 1.0(Hの左端)まで欠けなく全域発光
+            self.strokeProgress = rawProgress // 0.0(P/Sの右端) 〜 1.0(H/Sの左端)まで欠けなく全域発光
             
         } else {
             // 完全停止域（折り返しの極小瞬間）
@@ -318,14 +331,15 @@ public final class MotionDetector: ObservableObject {
     /// スイングの折り返し処理（振れ幅の自動学習とリアルタイム周期適応）
     private func handleTurnaround(isMovingPositive: Bool, turnaroundTheta: Double, currentGyro: Double, now: Date) {
         let interval = now.timeIntervalSince(lastTurnTime)
+        let isCompact = (activeRangeMode == .compactSnap)
         
         // 手首スナップ（4〜6Hzの超高速往復）に完全追従する動的チャタリング防止インターバル
-        let dynamicMinInterval = (activeRangeMode == .compactSnap)
-            ? max(0.035, min(0.09, 0.28 / max(abs(currentGyro), 1.0)))
-            : max(0.050, min(0.14, 0.45 / max(abs(currentGyro), 1.0)))
+        let dynamicMinInterval = isCompact
+            ? max(0.045, min(0.11, 0.32 / max(abs(currentGyro), 1.0)))
+            : max(0.060, min(0.16, 0.48 / max(abs(currentGyro), 1.0)))
         guard interval > dynamicMinInterval else { return }
         
-        // リアルタイム往復時間（Y: 往復時間）の計測と更新（手首高速往復に対応し下限0.08sへ拡大）
+        // リアルタイム往復時間（Y: 往復時間）の計測と更新
         let halfDuration = interval
         let measuredRoundTrip = halfDuration * 2.0
         if measuredRoundTrip >= 0.08 && measuredRoundTrip <= 2.5 {
@@ -336,16 +350,16 @@ public final class MotionDetector: ObservableObject {
         
         lastTurnTime = now
         
-        let minAllowedWidth = (activeRangeMode == .compactSnap) ? 0.14 : 0.35
+        let minAllowedWidth = isCompact ? 0.16 : 0.38
+        let maxAllowedWidth = isCompact ? 0.52 : 2.50
         
         if isMovingPositive {
             // 「右→左」から「左→右」への切り返し（左端に到達！往路スタート）
             leftTurnAngle = turnaroundTheta
             swingStartTheta = turnaroundTheta
             let width = abs(rightTurnAngle - leftTurnAngle)
-            // 手首30cmスイング（0.15 rad〜）から頭上大振り（〜2.5 rad）まで、直近の振れ幅にリアルタイム追従して文字をギュッと収める
-            if width > minAllowedWidth && width < 2.5 {
-                let widthAlpha = 0.35 // 振れ幅変化に機敏に適応
+            if width > minAllowedWidth && width < maxAllowedWidth {
+                let widthAlpha = isCompact ? 0.45 : 0.35 // 手首モード時は素早く振れ幅に適応
                 learnedStrokeWidth = learnedStrokeWidth * (1.0 - widthAlpha) + width * widthAlpha
                 strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
             }
@@ -354,8 +368,8 @@ public final class MotionDetector: ObservableObject {
             rightTurnAngle = turnaroundTheta
             swingStartTheta = turnaroundTheta
             let width = abs(rightTurnAngle - leftTurnAngle)
-            if width > minAllowedWidth && width < 2.5 {
-                let widthAlpha = 0.35
+            if width > minAllowedWidth && width < maxAllowedWidth {
+                let widthAlpha = isCompact ? 0.45 : 0.35
                 learnedStrokeWidth = learnedStrokeWidth * (1.0 - widthAlpha) + width * widthAlpha
                 strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
             }

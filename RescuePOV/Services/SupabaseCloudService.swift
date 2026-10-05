@@ -15,11 +15,28 @@ public final class SupabaseCloudService: ObservableObject {
     
     @Published public var lastSentTimestamp: Date?
     @Published public var isSyncing: Bool = false
+    @Published public var isEmailSent: Bool = false
+    @Published public var lastGeneratedPasscode: String = ""
+    
+    // 緊急送信先メールアドレス（デフォルトはユーザー本人のGmail）
+    @Published public var emergencyRecipientEmail: String {
+        didSet {
+            UserDefaults.standard.set(emergencyRecipientEmail, forKey: "emergency_recipient_email")
+        }
+    }
+    
+    private let vercelApiUrl = "https://rescuepov.vercel.app/api/send-sos-email"
     
     // 遠隔コマンド受信時のコールバック（文字の書き換え等）
     public var onRemoteTextReceived: ((String, String?) -> Void)?
     
     private init() {
+        if let savedEmail = UserDefaults.standard.string(forKey: "emergency_recipient_email"), !savedEmail.isEmpty {
+            self.emergencyRecipientEmail = savedEmail
+        } else {
+            self.emergencyRecipientEmail = "naohiko.yamada@gmail.com"
+        }
+        
         if let vendorId = UIDevice.current.identifierForVendor?.uuidString {
             self.deviceId = "iPhone-" + String(vendorId.prefix(6))
         } else {
@@ -27,7 +44,7 @@ public final class SupabaseCloudService: ObservableObject {
         }
     }
     
-    /// 緊急救難イベントをSupabaseに発信（非同期・バックグラウンド実行）
+    /// 緊急救難イベントをSupabaseに発信し、同時にGmailから緊急SOSメールを自動配信
     public func publishRescueEvent(
         latitude: Double?,
         longitude: Double?,
@@ -37,6 +54,15 @@ public final class SupabaseCloudService: ObservableObject {
         color: String,
         batteryLevel: Int?
     ) {
+        // 位置情報が渡されていない場合はLocationServiceから即時取得を試行
+        let finalLat = latitude ?? LocationService.shared.latitude
+        let finalLon = longitude ?? LocationService.shared.longitude
+        let finalAlt = altitude ?? LocationService.shared.altitude
+        
+        // ランダムな6桁ワンタイムパスコードを発行
+        let passcode = String(format: "%06X", Int.random(in: 0x100000...0xFFFFFF))
+        self.lastGeneratedPasscode = passcode
+        
         guard let url = URL(string: "\(supabaseUrl)/rescue_events") else { return }
         
         var request = URLRequest(url: url)
@@ -48,14 +74,15 @@ public final class SupabaseCloudService: ObservableObject {
         
         let payload: [String: Any?] = [
             "device_id": deviceId,
-            "latitude": latitude,
-            "longitude": longitude,
-            "altitude": altitude,
+            "latitude": finalLat,
+            "longitude": finalLon,
+            "altitude": finalAlt,
             "situation": situation ?? "rescue_sos",
             "target_text": targetText,
             "color": color,
             "battery_level": batteryLevel ?? Int(UIDevice.current.batteryLevel * 100),
-            "is_active": true
+            "is_active": true,
+            "passcode": passcode
         ]
         
         do {
@@ -70,6 +97,60 @@ public final class SupabaseCloudService: ObservableObject {
                 self?.isSyncing = false
                 if let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) {
                     self?.lastSentTimestamp = Date()
+                }
+            }
+        }.resume()
+        
+        // Vercel経由でご自身のGmailから緊急救難メールを自動送信！
+        triggerEmergencyEmail(
+            passcode: passcode,
+            latitude: finalLat,
+            longitude: finalLon,
+            altitude: finalAlt,
+            situation: situation,
+            targetText: targetText,
+            batteryLevel: batteryLevel
+        )
+    }
+    
+    /// Vercel APIを叩き、ユーザーのGmailから緊急SOSメールを送信
+    public func triggerEmergencyEmail(
+        passcode: String,
+        latitude: Double?,
+        longitude: Double?,
+        altitude: Double?,
+        situation: String?,
+        targetText: String,
+        batteryLevel: Int?
+    ) {
+        guard let url = URL(string: vercelApiUrl) else { return }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let body: [String: Any?] = [
+            "toEmail": emergencyRecipientEmail,
+            "recipientName": "ご家族・緊急連絡先",
+            "passcode": passcode,
+            "latitude": latitude,
+            "longitude": longitude,
+            "altitude": altitude,
+            "situation": situation ?? "rescue_sos",
+            "targetText": targetText,
+            "batteryLevel": batteryLevel ?? Int(UIDevice.current.batteryLevel * 100)
+        ]
+        
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: body.compactMapValues { $0 }) else { return }
+        request.httpBody = jsonData
+        
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                if let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) {
+                    self?.isEmailSent = true
+                    print("✅ Emergency SOS Email Sent Successfully via Gmail!")
+                } else {
+                    print("⚠️ Failed to send SOS Email: \(String(describing: error))")
                 }
             }
         }.resume()

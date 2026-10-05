@@ -181,57 +181,78 @@ public final class POVCanvasView: UIView {
             }
             
         } else {
-            // 【プログレッシブ・スリット走査法（Rolling Slit）＋マルチスリット残像法（Spatial Multiplexing）】
-            // スマホ自体の物理移動（左→右/右→左）に合わせて、画面内でもスリットが同方向に走査！
-            // 物理移動速度＋画面内走査速度が合算され、見かけの空間分解能が約2.5倍に劇的拡張。
-            // さらに隣接スライスを同時照射（Spatial Multiplexing）することで、120Hzの中で空間に立体文字が濃く結像する
             switch direction {
             case .horizontal:
-                let actualWidth = max(effectiveSlitWidth, 6.0)
-                let dotHeight = rect.height / CGFloat(dotCount)
-                let activeDotH = dotHeight * activeDotRatio
+                // 【モード別最適化: 30cm手首スナップ vs 頭上大振り超爆光照射】
+                let actualWidth: CGFloat
+                let primaryStartX: CGFloat
                 
-                // プログレッシブ走査X座標（物理進行に合わせて画面の12%〜88%をスリットが滑走）
-                let progress = detector.strokeProgress
-                let rollingProgress: CGFloat
-                if detector.currentPhase == .forward {
-                    rollingProgress = CGFloat(0.12 + 0.76 * progress)
+                if detector.activeRangeMode == .compactSnap {
+                    // 【30cm手首スナップモード: 重なり防止・中央アンカー固定 ＆ 高精細24pxスリット】
+                    // 手首の素早い角速度（15〜25度）をそのまま空間に射影するため、スリットは画面中央にガッチリ固定！
+                    // これにより、S・O・Sの各文字が空間に等間隔に並び、特定箇所への重なりを根絶！
+                    actualWidth = 24.0
+                    primaryStartX = (rect.width - actualWidth) / 2.0
                 } else {
-                    rollingProgress = CGFloat(0.88 - 0.76 * progress)
+                    // 【頭上大振りワイドモード: 140px超爆光スリット ＆ 画面中央固定 ＆ 光束ブースト】
+                    // 腕の高速大振り（秒速数メートル）でも暗くならないよう、スリット幅を140px（画面幅の約36%）へ超拡大！
+                    // 画面内ローリング走査を廃止して画面中央に固定することで、物理スイングの露光時間を最大化！
+                    // 人間の網膜に届く光子（フォトン量）を3倍以上に増幅し、夜空で圧倒的な眩しさの爆光文字を照射！
+                    actualWidth = 140.0
+                    primaryStartX = (rect.width - actualWidth) / 2.0
                 }
-                let primaryStartX = rect.width * rollingProgress - actualWidth / 2.0
                 
-                // 1. 主スリット（Primary Slit）の照射
+                let dotHeight = rect.height / CGFloat(dotCount)
+                let activeDotH = dotHeight * 0.92 // ドット高さを92%まで広げて最大光束化（隙間8%で文字判別性担保）
+                
+                // 1. 主スリット（Primary Slit）の超爆光照射
                 ctx.setFillColor(slitColor.cgColor)
                 for (idx, isOn) in activeSlice.enumerated() {
                     if isOn {
                         let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
                         let dotRect = CGRect(x: primaryStartX, y: y, width: actualWidth, height: activeDotH)
-                        let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(actualWidth * 0.15, 6.0))
+                        let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(actualWidth * 0.15, 10.0))
                         ctx.addPath(path.cgPath)
                         ctx.fillPath()
                     }
                 }
                 
-                // 2. 【マルチスリット・ストライプ残像（Spatial Multiplexing）】
-                // 1フレーム（120Hz = 8.3ms）の中で、主スリットの進行方向オフセット位置に
-                // 隣接スライスを同時照射！網膜の残像保持時間（約50ms）内に複数列が空間に焼き付き、
-                // パラパラ漫画のような隙間を完全に埋めて文字がくっきり結像する
-                let multiOffset: CGFloat = (detector.currentPhase == .forward) ? -(actualWidth * 1.6) : (actualWidth * 1.6)
-                let secondaryIndex = (detector.currentPhase == .forward) ? currentSliceIndex - 1 : currentSliceIndex + 1
-                
-                if secondaryIndex >= 0 && secondaryIndex < slices.count {
-                    let secondarySlice = isUpsideDown ? Array(slices[secondaryIndex].reversed()) : slices[secondaryIndex]
-                    let secondaryStartX = primaryStartX + multiOffset
+                // 2. 頭上ワイドモード時: 隣接スライスを画面左右に補助同時照射（空間フォトン・ブースト）
+                // 遠距離やヘリコプターからでも肉眼で強烈に認識できる爆光度を実現
+                if detector.activeRangeMode == .wide {
+                    let sideWidth = actualWidth * 0.40
+                    let leftStartX = max(4.0, primaryStartX - sideWidth - 12.0)
+                    let rightStartX = min(rect.width - sideWidth - 4.0, primaryStartX + actualWidth + 12.0)
                     
-                    ctx.setFillColor(slitColor.cgColor)
-                    for (idx, isOn) in secondarySlice.enumerated() {
-                        if isOn {
-                            let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
-                            let dotRect = CGRect(x: secondaryStartX, y: y, width: actualWidth * 0.92, height: activeDotH)
-                            let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(actualWidth * 0.15, 6.0))
-                            ctx.addPath(path.cgPath)
-                            ctx.fillPath()
+                    // 進行方向に応じた前後スライスの補助発光（輝度75%）
+                    let prevIndex = (detector.currentPhase == .forward) ? currentSliceIndex - 1 : currentSliceIndex + 1
+                    let nextIndex = (detector.currentPhase == .forward) ? currentSliceIndex + 1 : currentSliceIndex - 1
+                    
+                    if prevIndex >= 0 && prevIndex < slices.count {
+                        let prevSlice = isUpsideDown ? Array(slices[prevIndex].reversed()) : slices[prevIndex]
+                        ctx.setFillColor(slitColor.withAlphaComponent(0.75).cgColor)
+                        for (idx, isOn) in prevSlice.enumerated() {
+                            if isOn {
+                                let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
+                                let dotRect = CGRect(x: leftStartX, y: y, width: sideWidth, height: activeDotH)
+                                let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(sideWidth * 0.15, 6.0))
+                                ctx.addPath(path.cgPath)
+                                ctx.fillPath()
+                            }
+                        }
+                    }
+                    
+                    if nextIndex >= 0 && nextIndex < slices.count {
+                        let nextSlice = isUpsideDown ? Array(slices[nextIndex].reversed()) : slices[nextIndex]
+                        ctx.setFillColor(slitColor.withAlphaComponent(0.75).cgColor)
+                        for (idx, isOn) in nextSlice.enumerated() {
+                            if isOn {
+                                let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
+                                let dotRect = CGRect(x: rightStartX, y: y, width: sideWidth, height: activeDotH)
+                                let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(sideWidth * 0.15, 6.0))
+                                ctx.addPath(path.cgPath)
+                                ctx.fillPath()
+                            }
                         }
                     }
                 }

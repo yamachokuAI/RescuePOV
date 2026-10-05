@@ -37,6 +37,7 @@ public struct MainDashboardView: View {
     @ObservedObject private var motionDetector = MotionDetector.shared
     @ObservedObject private var voiceService = VoiceRescueService.shared
     @ObservedObject private var aiEngine = HybridIntelligenceEngine.shared
+    @ObservedObject private var cloudService = SupabaseCloudService.shared
     
     // Liquid Glass 水滴歪みモーフィング演出状態
     @State private var liquidDropletScaleX: CGFloat = 1.0
@@ -137,6 +138,7 @@ public struct MainDashboardView: View {
             }
             .onAppear {
                 motionDetector.start(direction: selectedDirection)
+                LocationService.shared.requestLocation()
             }
             .onChange(of: motionDetector.isOverheadSwinging) { _, isSwinging in
                 if isSwinging && !isShowingPOV {
@@ -544,6 +546,24 @@ public struct MainDashboardView: View {
                     if voiceService.isVoiceSyncEnabled {
                         Toggle("声が止んだら元の文字に復帰", isOn: $voiceService.autoResetToDefault)
                     }
+                }
+                
+                Section(header: Text("緊急救難SOSメール自動配信")) {
+                    HStack {
+                        Image(systemName: "envelope.badge.shield.half.filled.fill")
+                            .foregroundColor(.red)
+                        Text("緊急送信先")
+                        Spacer()
+                        TextField("メールアドレス", text: $cloudService.emergencyRecipientEmail)
+                            .multilineTextAlignment(.trailing)
+                            .foregroundColor(.cyan)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                    }
+                    
+                    Text("※SOS起動または携帯を頭上で振ると、このアドレス宛てに【暗号化されたリアルタイムGPS地図リンク】と【ワンタイムパスコード】がGoogle公式SMTPから自動送信されます。")
+                        .font(.caption2)
+                        .foregroundColor(.gray)
                 }
                 
                 Section(header: Text("Apple Intelligence & 状況判断")) {
