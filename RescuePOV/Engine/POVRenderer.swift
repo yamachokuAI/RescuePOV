@@ -33,11 +33,13 @@ public enum POVColor: String, CaseIterable, Identifiable {
 /// CADisplayLinkによる超高速POVスリットレンダラーUIView
 public final class POVCanvasView: UIView {
     public var slices: [[Bool]] = []
+    public var imageSlices: [CGImage] = []
     public var rawText: String = "HELP"
     public var direction: POVDirection = .horizontal
     public var slitColor: UIColor = .white
     public var slitWidth: CGFloat = 35.0 // デフォルト35px（高光量かつE文字判別可能バランス）
     public var isDiagonal: Bool = false  // 画面対角線を使った特大文字モード
+    public var diagonalAngle: CGFloat? = nil // 草魔法などの回転方向に応じたカスタム角度
     public var activeDotRatio: CGFloat = 0.82 // 縦ドット発光比率（0.82で隙間18%確保し、E文字潰れを根絶）
     
     private var displayLink: CADisplayLink?
@@ -90,7 +92,7 @@ public final class POVCanvasView: UIView {
         }
         
         // 【モード2 & 3: スイングモード（30cm手首浮き出し or ワイド）】
-        guard detector.isEmitting, !slices.isEmpty else {
+        guard detector.isEmitting, (!slices.isEmpty || !imageSlices.isEmpty) else {
             if currentSliceIndex != -1 {
                 currentSliceIndex = -1
                 setNeedsDisplay()
@@ -98,7 +100,7 @@ public final class POVCanvasView: UIView {
             return
         }
         
-        let count = slices.count
+        let count = !imageSlices.isEmpty ? imageSlices.count : slices.count
         let progress = detector.strokeProgress
         
         // 往路・復路で空間上の同じ絶対位置に同じ文字スライスを発光させる
@@ -126,11 +128,33 @@ public final class POVCanvasView: UIView {
         
         // 【幅0cmモード: ゼロスイング・全画面一文字ストロボ発光】
         if detector.activeRangeMode == .zeroStatic {
+            if !imageSlices.isEmpty {
+                // フルカラー画像モード（魔法バトル等）では、静止時の文字ストロボを完全に排除（無効化）
+                // これにより「FIRE」などの文字が表示される現象を防ぐ
+                return
+            }
             drawZeroStaticStrobe(in: rect, ctx: ctx)
             return
         }
         
-        guard currentSliceIndex >= 0, currentSliceIndex < slices.count else {
+        guard currentSliceIndex >= 0, currentSliceIndex < (!imageSlices.isEmpty ? imageSlices.count : slices.count) else {
+            return
+        }
+        
+        // 【フルカラー画像モード】
+        if !imageSlices.isEmpty {
+            let slice = imageSlices[currentSliceIndex]
+            
+            let effectiveSlitWidth = detector.activeRangeMode == .compactSnap ? max(slitWidth * 0.30, 4.0) : slitWidth
+            let primaryStartX = (rect.width - effectiveSlitWidth) / 2.0
+            
+            ctx.saveGState()
+            // CoreGraphicsは左下原点のためY軸を反転
+            ctx.translateBy(x: 0, y: rect.height)
+            ctx.scaleBy(x: 1.0, y: -1.0)
+            
+            ctx.draw(slice, in: CGRect(x: primaryStartX, y: 0, width: effectiveSlitWidth, height: rect.height))
+            ctx.restoreGState()
             return
         }
         
@@ -147,7 +171,7 @@ public final class POVCanvasView: UIView {
         // 手首の狭いスナップ（振れ幅約25〜35cm）では、スリットを14pxに絞ることで空間にクッキリ浮き出る
         let effectiveSlitWidth: CGFloat
         if detector.activeRangeMode == .compactSnap {
-            effectiveSlitWidth = 14.0
+            effectiveSlitWidth = 4.0 // 手首モード時はスリット幅を極細の4pxに強制固定（判別不能になるのを防ぐ）
         } else {
             effectiveSlitWidth = slitWidth
         }
@@ -155,11 +179,11 @@ public final class POVCanvasView: UIView {
         // 【電源ボタン誤押し回避: 上下逆さま持ち自動対応（安全設計）】
         let activeSlice = isUpsideDown ? Array(slice.reversed()) : slice
         
-        if isDiagonal {
+        if isDiagonal || diagonalAngle != nil {
             // 【対角線特大文字モード（改良版）】
             // 画面中心を原点に対角線の角度に回転させ、対角線全長（約950pt）を使って文字を巨大描画！
             let diagLength = hypot(rect.width, rect.height)
-            let angle = atan2(rect.width, rect.height) // 約24度
+            let angle = diagonalAngle ?? atan2(rect.width, rect.height)
             
             ctx.translateBy(x: rect.midX, y: rect.midY)
             ctx.rotate(by: -angle)
@@ -184,28 +208,12 @@ public final class POVCanvasView: UIView {
             switch direction {
             case .horizontal:
                 // 【モード別最適化: 30cm手首スナップ vs 頭上大振り超爆光照射】
-                let actualWidth: CGFloat
-                let primaryStartX: CGFloat
-                
-                if detector.activeRangeMode == .compactSnap {
-                    // 【30cm手首スナップモード: 重なり防止・中央アンカー固定 ＆ 高精細24pxスリット】
-                    // 手首の素早い角速度（15〜25度）をそのまま空間に射影するため、スリットは画面中央にガッチリ固定！
-                    // これにより、S・O・Sの各文字が空間に等間隔に並び、特定箇所への重なりを根絶！
-                    actualWidth = 24.0
-                    primaryStartX = (rect.width - actualWidth) / 2.0
-                } else {
-                    // 【頭上大振りワイドモード: 140px超爆光スリット ＆ 画面中央固定 ＆ 光束ブースト】
-                    // 腕の高速大振り（秒速数メートル）でも暗くならないよう、スリット幅を140px（画面幅の約36%）へ超拡大！
-                    // 画面内ローリング走査を廃止して画面中央に固定することで、物理スイングの露光時間を最大化！
-                    // 人間の網膜に届く光子（フォトン量）を3倍以上に増幅し、夜空で圧倒的な眩しさの爆光文字を照射！
-                    actualWidth = 140.0
-                    primaryStartX = (rect.width - actualWidth) / 2.0
-                }
-                
+                let actualWidth = effectiveSlitWidth
+                let primaryStartX = (rect.width - actualWidth) / 2.0
                 let dotHeight = rect.height / CGFloat(dotCount)
-                let activeDotH = dotHeight * 0.92 // ドット高さを92%まで広げて最大光束化（隙間8%で文字判別性担保）
+                let activeDotH = dotHeight * 1.05 // 隙間を完全に無くし、オーバーラップさせて爆光を確保
                 
-                // 1. 主スリット（Primary Slit）の超爆光照射
+                // 主スリット（Primary Slit）の照射
                 ctx.setFillColor(slitColor.cgColor)
                 for (idx, isOn) in activeSlice.enumerated() {
                     if isOn {
@@ -214,46 +222,6 @@ public final class POVCanvasView: UIView {
                         let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(actualWidth * 0.15, 10.0))
                         ctx.addPath(path.cgPath)
                         ctx.fillPath()
-                    }
-                }
-                
-                // 2. 頭上ワイドモード時: 隣接スライスを画面左右に補助同時照射（空間フォトン・ブースト）
-                // 遠距離やヘリコプターからでも肉眼で強烈に認識できる爆光度を実現
-                if detector.activeRangeMode == .wide {
-                    let sideWidth = actualWidth * 0.40
-                    let leftStartX = max(4.0, primaryStartX - sideWidth - 12.0)
-                    let rightStartX = min(rect.width - sideWidth - 4.0, primaryStartX + actualWidth + 12.0)
-                    
-                    // 進行方向に応じた前後スライスの補助発光（輝度75%）
-                    let prevIndex = (detector.currentPhase == .forward) ? currentSliceIndex - 1 : currentSliceIndex + 1
-                    let nextIndex = (detector.currentPhase == .forward) ? currentSliceIndex + 1 : currentSliceIndex - 1
-                    
-                    if prevIndex >= 0 && prevIndex < slices.count {
-                        let prevSlice = isUpsideDown ? Array(slices[prevIndex].reversed()) : slices[prevIndex]
-                        ctx.setFillColor(slitColor.withAlphaComponent(0.75).cgColor)
-                        for (idx, isOn) in prevSlice.enumerated() {
-                            if isOn {
-                                let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
-                                let dotRect = CGRect(x: leftStartX, y: y, width: sideWidth, height: activeDotH)
-                                let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(sideWidth * 0.15, 6.0))
-                                ctx.addPath(path.cgPath)
-                                ctx.fillPath()
-                            }
-                        }
-                    }
-                    
-                    if nextIndex >= 0 && nextIndex < slices.count {
-                        let nextSlice = isUpsideDown ? Array(slices[nextIndex].reversed()) : slices[nextIndex]
-                        ctx.setFillColor(slitColor.withAlphaComponent(0.75).cgColor)
-                        for (idx, isOn) in nextSlice.enumerated() {
-                            if isOn {
-                                let y = CGFloat(idx) * dotHeight + (dotHeight - activeDotH) / 2.0
-                                let dotRect = CGRect(x: rightStartX, y: y, width: sideWidth, height: activeDotH)
-                                let path = UIBezierPath(roundedRect: dotRect, cornerRadius: min(sideWidth * 0.15, 6.0))
-                                ctx.addPath(path.cgPath)
-                                ctx.fillPath()
-                            }
-                        }
                     }
                 }
                 
@@ -346,39 +314,47 @@ public final class POVCanvasView: UIView {
 /// SwiftUIラッパー
 public struct POVCanvasRepresentable: UIViewRepresentable {
     public let slices: [[Bool]]
+    public let imageSlices: [CGImage]
     public let rawText: String
     public let direction: POVDirection
     public let color: UIColor
     public let slitWidth: CGFloat
     public let isDiagonal: Bool
+    public let diagonalAngle: CGFloat?
     public let activeDotRatio: CGFloat
     
     public init(
-        slices: [[Bool]],
+        slices: [[Bool]] = [],
+        imageSlices: [CGImage] = [],
         rawText: String = "HELP",
         direction: POVDirection,
         color: UIColor,
         slitWidth: CGFloat = 35.0,
         isDiagonal: Bool = false,
+        diagonalAngle: CGFloat? = nil,
         activeDotRatio: CGFloat = 0.82
     ) {
         self.slices = slices
+        self.imageSlices = imageSlices
         self.rawText = rawText
         self.direction = direction
         self.color = color
         self.slitWidth = slitWidth
         self.isDiagonal = isDiagonal
+        self.diagonalAngle = diagonalAngle
         self.activeDotRatio = activeDotRatio
     }
     
     public func makeUIView(context: Context) -> POVCanvasView {
         let view = POVCanvasView()
         view.slices = slices
+        view.imageSlices = imageSlices
         view.rawText = rawText
         view.direction = direction
         view.slitColor = color
         view.slitWidth = slitWidth
         view.isDiagonal = isDiagonal
+        view.diagonalAngle = diagonalAngle
         view.activeDotRatio = activeDotRatio
         view.startRendering()
         return view
@@ -386,6 +362,7 @@ public struct POVCanvasRepresentable: UIViewRepresentable {
     
     public func updateUIView(_ uiView: POVCanvasView, context: Context) {
         uiView.slices = slices
+        uiView.imageSlices = imageSlices
         uiView.rawText = rawText
         uiView.direction = direction
         uiView.slitColor = color
@@ -394,6 +371,9 @@ public struct POVCanvasRepresentable: UIViewRepresentable {
         }
         if uiView.isDiagonal != isDiagonal {
             uiView.isDiagonal = isDiagonal
+        }
+        if uiView.diagonalAngle != diagonalAngle {
+            uiView.diagonalAngle = diagonalAngle
         }
         if uiView.activeDotRatio != activeDotRatio {
             uiView.activeDotRatio = activeDotRatio

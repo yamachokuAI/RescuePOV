@@ -63,11 +63,10 @@ public struct POVFullscreenView: View {
     @State private var isTestFlash: Bool = false
     @State private var hasTriggeredEmergency: Bool = false
     @State private var isShowingTrainingSheet: Bool = false
-    @State private var letterSpacingSetting: Int = 0 // 0: 超密着, 1: 最小, 2: 標準
     
-    // 超爆光スリット幅（ワイド140px・30cm手首24pxに内部自動適応）
-    private let slitWidth: CGFloat = 140.0
-    private let activeDotRatio: CGFloat = 0.82
+    // 残像のボケ・箱化を防ぐための適正スリット幅（常に爆光90pxに固定）
+    private let slitWidthSetting: CGFloat = 90.0
+    private let activeDotRatio: CGFloat = 1.0
     @State private var manualShowControls: Bool = false
     
     /// 水平時、またはタップ時にのみコントロールUIを表示
@@ -101,7 +100,7 @@ public struct POVFullscreenView: View {
                 rawText: currentText,
                 direction: direction,
                 color: isTestFlash ? UIColor.white : color.uiColor,
-                slitWidth: slitWidth,
+                slitWidth: slitWidthSetting,
                 isDiagonal: false,
                 activeDotRatio: activeDotRatio
             )
@@ -206,7 +205,6 @@ public struct POVFullscreenView: View {
         VStack {
             topBarView
             Spacer()
-            bottomControlPanel
         }
         .opacity(isControlsVisible ? 1.0 : 0.0)
         .animation(.easeInOut(duration: 0.22), value: isControlsVisible)
@@ -214,7 +212,7 @@ public struct POVFullscreenView: View {
     
     @ViewBuilder
     private var topBarView: some View {
-        HStack(spacing: 10) {
+        HStack {
             Button(action: {
                 if let onDismiss = onDismiss {
                     onDismiss()
@@ -232,38 +230,7 @@ public struct POVFullscreenView: View {
                 .background(Capsule().fill(Color(white: 0.25, opacity: 0.85)))
                 .foregroundColor(.white)
             }
-            
-            HStack(spacing: 6) {
-                ForEach(["HELP", "SOS", "OK"], id: \.self) { word in
-                    Button(action: {
-                        currentText = word
-                        rebuildSlices()
-                    }) {
-                        Text(word)
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .background(Capsule().fill(currentText == word ? Color.red : Color(white: 0.2)))
-                            .foregroundColor(.white)
-                    }
-                }
-            }
-            
             Spacer()
-            
-            Button(action: {
-                flashScreen()
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: "lightbulb.fill")
-                    Text("テスト点灯")
-                }
-                .font(.caption.bold())
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.orange.opacity(0.85)))
-                .foregroundColor(.black)
-            }
         }
         .padding(.horizontal)
         .padding(.top, 12)
@@ -318,20 +285,13 @@ public struct POVFullscreenView: View {
             
             // 文字間隔セレクター（確実に反応する高感度ボタン）
             HStack(spacing: 6) {
-                Image(systemName: "arrow.left.and.line.vertical.and.arrow.right")
+                Image(systemName: "sun.max.fill")
                     .font(.system(size: 10))
                     .foregroundColor(.yellow)
-                Text("文字間隔:")
+                Text("AUTO BRIGHTNESS & SPACING ACTIVE")
                     .font(.system(size: 10).bold())
                     .foregroundColor(.yellow)
-                
                 Spacer()
-                
-                HStack(spacing: 4) {
-                    letterSpacingButton(title: "超密着(0)", spacing: 0)
-                    letterSpacingButton(title: "最小(1)", spacing: 1)
-                    letterSpacingButton(title: "標準(2)", spacing: 2)
-                }
             }
         }
         .padding(8)
@@ -339,25 +299,7 @@ public struct POVFullscreenView: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.cyan.opacity(0.3), lineWidth: 1))
     }
     
-    @ViewBuilder
-    private func letterSpacingButton(title: String, spacing: Int) -> some View {
-        Button(action: {
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
-            letterSpacingSetting = spacing
-            rebuildSlices()
-        }) {
-            Text(title)
-                .font(.system(size: 9.5, weight: .bold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(letterSpacingSetting == spacing ? Color.yellow : Color.white.opacity(0.12))
-                )
-                .foregroundColor(letterSpacingSetting == spacing ? .black : .white)
-        }
-        .buttonStyle(.plain)
-    }
+    // 削除: slitWidthButtonとletterSpacingButton
     
     @ViewBuilder
     private var safetyCard: some View {
@@ -581,7 +523,6 @@ public struct POVFullscreenView: View {
             sliceResolution: 28,
             mirrorForViewer: mirrorForViewer,
             isCondensed: isCondensed,
-            letterSpacing: letterSpacingSetting,
             edgeMargin: 0 // 頂点の真っ暗ゾーンを完全撤廃
         )
     }

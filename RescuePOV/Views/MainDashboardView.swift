@@ -43,10 +43,15 @@ public struct MainDashboardView: View {
     // Liquid Glass 水滴歪みモーフィング演出状態
     @State private var liquidDropletScaleX: CGFloat = 1.0
     @State private var liquidDropletScaleY: CGFloat = 1.0
+    @State private var isShowingMagicBattle: Bool = false
     @State private var previewOffset: CGFloat = -40
     @State private var previewStrobeChar: String = "H"
     @State private var previewStrobeIndex: Int = 0
     @State private var isButtonPressed: Bool = false
+    
+    // アプリ言語設定 (auto: 端末のネイティブ言語, en: 英語)
+    @AppStorage("appLanguage") private var appLanguage: String = "auto"
+    @Environment(\.scenePhase) private var scenePhase
     
     public init() {}
     
@@ -66,6 +71,29 @@ public struct MainDashboardView: View {
                 
                 // 一画面完結・スクロール不要のスマートレイアウト
                 VStack(spacing: 16) {
+                    
+                    // 振幅モードスイッチャー（1行に凝縮）
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(POVDisplayRangeMode.allCases) { mode in
+                                Button(action: {
+                                    motionDetector.selectedRangeMode = mode
+                                }) {
+                                    Text(mode.shortTitle)
+                                        .font(.system(size: 11, weight: .bold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            Capsule()
+                                                .fill(motionDetector.selectedRangeMode == mode ? Color.yellow : Color.white.opacity(0.12))
+                                        )
+                                        .foregroundColor(motionDetector.selectedRangeMode == mode ? .black : .white)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                    }
+                    
                     // 1. Apple Liquid Glass 水滴モーフィング・モードスイッチ
                     liquidGlassModeSwitcher
                     
@@ -111,6 +139,21 @@ public struct MainDashboardView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 12) {
+                        Button(action: {
+                            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                            appLanguage = (appLanguage == "en") ? "auto" : "en"
+                        }) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "globe")
+                                Text(appLanguage == "en" ? "EN" : "JP")
+                                    .font(.caption2.bold())
+                            }
+                            .foregroundColor(.white.opacity(0.85))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(Color.white.opacity(0.15)))
+                        }
+                        
                         Button(action: {
                             UIImpactFeedbackGenerator(style: .light).impactOccurred()
                             isShowingTraining = true
@@ -160,12 +203,22 @@ public struct MainDashboardView: View {
                 LocationService.shared.requestLocation()
             }
             .onChange(of: motionDetector.isOverheadSwinging) { _, isSwinging in
+                guard !isShowingMagicBattle else { return }
                 if isSwinging && !isShowingPOV {
                     isShowingPOV = true
                 }
             }
         }
+        .id(appLanguage) // Force complete view recreation when language changes
+        .environment(\.locale, appLanguage == "auto" ? .current : Locale(identifier: appLanguage))
         .preferredColorScheme(.dark)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active {
+                motionDetector.start(direction: selectedDirection)
+            } else {
+                motionDetector.stop()
+            }
+        }
     }
     
     // MARK: - 1. Liquid Glass 水滴モーフィング・モードスイッチャー
@@ -416,7 +469,7 @@ public struct MainDashboardView: View {
                 HStack(spacing: 8) {
                     let presets = (operationalMode == .rescue)
                         ? ["HELP", "SOS", "たすけて", "ココ", "孤立", "119", "OK"]
-                        : ["HAPPY", "CHEERS", "LOVE", "CONGRAT", "YES!", "RUN"]
+                        : ["HAPPY", "CHEERS", "CONGRAT", "YES!", "RUN"]
                     
                     ForEach(presets, id: \.self) { word in
                         Button(action: {
@@ -447,6 +500,30 @@ public struct MainDashboardView: View {
                     }
                 }
                 .padding(.horizontal, 2)
+            }
+            
+            // 日常モード専用：マジックバトル開始ボタン
+            if operationalMode == .party {
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                    isShowingMagicBattle = true
+                }) {
+                    HStack {
+                        Image(systemName: "sparkles")
+                        Text("POV MAGIC BATTLE")
+                    }
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(
+                        LinearGradient(colors: [.orange, .red], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    )
+                    .cornerRadius(16)
+                    .shadow(color: .red.opacity(0.5), radius: 8, y: 4)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
             }
         }
     }
@@ -518,6 +595,14 @@ public struct MainDashboardView: View {
             .scaleEffect(isButtonPressed ? 0.96 : 1.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isButtonPressed)
         }
+        .onChange(of: operationalMode) { _, newMode in
+            if newMode == .party {
+                // 日常モード時は音声連携をデフォルトでオフにする
+                voiceService.isVoiceSyncEnabled = false
+                // 固定文の初期値にセット
+                targetText = "HAPPY"
+            }
+        }
         .simultaneousGesture(
             DragGesture(minimumDistance: 0)
                 .onChanged { _ in isButtonPressed = true }
@@ -536,6 +621,9 @@ public struct MainDashboardView: View {
                     motionDetector.resetOverheadTrigger()
                 }
             )
+        }
+        .fullScreenCover(isPresented: $isShowingMagicBattle) {
+            POVMagicBattleView()
         }
     }
     

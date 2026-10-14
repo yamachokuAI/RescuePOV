@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -22,10 +24,8 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>暗闇で緊急時に背面LEDライト（トーチ）でSOSモールス信号を点滅させるために使用します。</string>
+	<string>背面LEDライトの点滅（SOS）および、マジックバトルモードにおける相手の魔法の色（光）の読み取りに使用します。</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>救助要請時に現在地（緯度・経度）を画面に表示し、救助隊に正確な位置を伝えるために使用します。</string>
 	<key>NSMicrophoneUsageDescription</key>

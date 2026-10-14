@@ -95,8 +95,8 @@ public final class BitmapGenerator {
         sliceResolution: Int = 20,
         mirrorForViewer: Bool = true,
         isCondensed: Bool = false,
-        letterSpacing: Int? = nil,
-        edgeMargin: Int = 0
+        letterSpacing: Double? = nil,
+        edgeMargin: Int = 2 // エッジ切れ(P->F)を防ぐための極小安全マージン
     ) -> [[Bool]] {
         guard !text.isEmpty else {
             return Array(repeating: Array(repeating: false, count: sliceResolution), count: targetSlices)
@@ -104,7 +104,7 @@ public final class BitmapGenerator {
         
         let upper = text.uppercased()
         let canUseDotFont = upper.allSatisfy { dotFont[$0] != nil }
-        let effectiveSpacing = letterSpacing ?? (isCondensed ? 0 : 1)
+        let effectiveSpacing: Double = letterSpacing ?? (isCondensed ? 0.7 : 1.1)
         
         if canUseDotFont {
             return generateFromDotFont(
@@ -139,7 +139,7 @@ public final class BitmapGenerator {
         sliceResolution: Int,
         mirrorForViewer: Bool,
         isCondensed: Bool,
-        letterSpacing: Int,
+        letterSpacing: Double,
         edgeMargin: Int
     ) -> [[Bool]] {
         var rawCols: [[Bool]] = []
@@ -153,14 +153,8 @@ public final class BitmapGenerator {
         for (charIndex, char) in chars.enumerated() {
             if let pattern = dotFont[char] {
                 // 30cm手首スナップ用: 5列パターンから[先頭, 中央, 末尾]の3列を抽出し、超スリム縦長フォント化
-                let activePattern: [UInt8]
-                if isCondensed && pattern.count >= 3 {
-                    let midIdx = pattern.count / 2
-                    let lastIdx = pattern.count - 1
-                    activePattern = [pattern[0], pattern[midIdx], pattern[lastIdx]]
-                } else {
-                    activePattern = pattern
-                }
+                let activePattern = pattern
+
                 
                 for col in activePattern {
                     var colDots: [Bool] = []
@@ -168,12 +162,19 @@ public final class BitmapGenerator {
                         let isOn = ((col >> (6 - row)) & 1) == 1
                         colDots.append(isOn)
                     }
+                    // 列を拡張して隙間を広げる（太いスリットでも箱化しないように物理距離を稼ぐ）
                     rawCols.append(colDots)
+                    if !isCondensed {
+                        rawCols.append(colDots)
+                        rawCols.append(colDots) // フルスイング時は3倍に拡張
+                    }
+                    // 手首モード(isCondensed)時は物理距離が短いため拡張しない（1倍のまま）
                 }
                 
-                // 文字間スペース（最後の文字の後には挟まないことで頂点の暗黒化を完全防止）
+                // 文字間スペース（残像によるくっつきを防ぐため確保、文字数とモードで自動調整）
                 if charIndex < chars.count - 1 {
-                    for _ in 0..<letterSpacing {
+                    let spaces = isCondensed ? 0 : (chars.count > 5 ? 1 : 2)
+                    for _ in 0..<max(0, spaces) {
                         rawCols.append([Bool](repeating: false, count: 7))
                     }
                 }
@@ -197,7 +198,8 @@ public final class BitmapGenerator {
             resultSlices.append(scaledCol)
         }
         
-        if mirrorForViewer {
+        // 【反転修正】ユーザーのフィードバックにより、表示が逆だったためロジックをシンプルに反転
+        if !mirrorForViewer {
             resultSlices.reverse()
         }
         
@@ -212,12 +214,11 @@ public final class BitmapGenerator {
         sliceResolution: Int,
         mirrorForViewer: Bool,
         isCondensed: Bool,
-        letterSpacing: Int,
+        letterSpacing: Double,
         edgeMargin: Int
     ) -> [[Bool]] {
         let charCount = max(text.count, 1)
-        // 文字間隔を極限まで縮小
-        let slicePerChar = isCondensed ? 6 : (letterSpacing == 0 ? 8 : 10)
+        let slicePerChar = isCondensed ? 6 : (letterSpacing < 1.0 ? 8 : 10)
         let dynamicWidth = max(targetSlices, charCount * slicePerChar + edgeMargin * 2)
         let width = dynamicWidth
         let height = sliceResolution
@@ -253,7 +254,7 @@ public final class BitmapGenerator {
             font = UIFont.systemFont(ofSize: fontSize, weight: .heavy)
         }
         
-        let kernValue: CGFloat = letterSpacing == 0 ? -1.2 : (letterSpacing == 1 ? 0.0 : 1.5)
+        let kernValue: CGFloat = CGFloat(letterSpacing * 2.0 - 2.0) // 0.7-> -0.6, 1.1-> 0.2, 1.5-> 1.0
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: UIColor.white,
@@ -282,6 +283,77 @@ public final class BitmapGenerator {
                 colDots.append(pixel > threshold)
             }
             slices.append(colDots)
+        }
+        
+        return slices
+    }
+    
+    /// フルカラー画像(UIImage)を垂直方向の帯(CGImage)のリストに分割します（高画質POV用）
+    public func generateColorSlices(
+        from image: UIImage,
+        targetSlices: Int = 32
+    ) -> [CGImage] {
+        guard let cgImage = image.cgImage else { return [] }
+        
+        let width = cgImage.width
+        let height = cgImage.height
+        let sliceWidth = max(1, width / targetSlices)
+        
+        var slices: [CGImage] = []
+        for i in 0..<targetSlices {
+            let x = i * sliceWidth
+            let rect = CGRect(x: x, y: 0, width: sliceWidth, height: height)
+            if let cropped = cgImage.cropping(to: rect) {
+                slices.append(cropped)
+            }
+        }
+        return slices
+    }
+    
+    /// 画像(UIImage)を2次元ブール配列（スライスのリスト）に変換します
+    public func generateSlices(
+        from image: UIImage,
+        targetSlices: Int = 32,
+        sliceResolution: Int = 28
+    ) -> [[Bool]] {
+        let size = CGSize(width: targetSlices, height: sliceResolution)
+        UIGraphicsBeginImageContextWithOptions(size, true, 1.0)
+        
+        guard let ctx = UIGraphicsGetCurrentContext() else {
+            UIGraphicsEndImageContext()
+            return Array(repeating: Array(repeating: false, count: sliceResolution), count: targetSlices)
+        }
+        
+        ctx.setFillColor(UIColor.black.cgColor)
+        ctx.fill(CGRect(origin: .zero, size: size))
+        
+        image.draw(in: CGRect(origin: .zero, size: size))
+        let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+        
+        guard let cgImage = resizedImage?.cgImage else {
+            return Array(repeating: Array(repeating: false, count: sliceResolution), count: targetSlices)
+        }
+        
+        let width = cgImage.width
+        let height = cgImage.height
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        var rawData = [UInt8](repeating: 0, count: width * height)
+        
+        guard let context = CGContext(data: &rawData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: colorSpace, bitmapInfo: CGImageAlphaInfo.none.rawValue) else {
+            return Array(repeating: Array(repeating: false, count: sliceResolution), count: targetSlices)
+        }
+        
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        
+        var slices: [[Bool]] = Array(repeating: Array(repeating: false, count: height), count: width)
+        
+        for x in 0..<width {
+            for y in 0..<height {
+                let byteIndex = y * width + x
+                let pixelVal = rawData[byteIndex]
+                slices[x][y] = pixelVal > 40 // 閾値調整（少しでも明るければ光らせる）
+            }
         }
         
         return slices

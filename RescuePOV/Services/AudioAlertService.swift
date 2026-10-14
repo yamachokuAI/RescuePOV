@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import CoreAudio
 
 /// 非常用レスキューホイッスルおよび大音量警報サイレン合成サービス
 public final class AudioAlertService: ObservableObject {

@@ -14,6 +14,8 @@ public enum POVDisplayRangeMode: String, CaseIterable, Identifiable {
     case auto = "AI自動適応（推奨）"
     case compactSnap = "手首30cm浮き出しホログラム"
     case wide = "頭上ワイド（60〜100cm）"
+    case semiCircle = "半円形（180度アーチ）"
+    case fullCircle = "真円形（360度風車）"
     case zeroStatic = "ゼロスイング（0cm静止・全画面文字ストロボ）"
     
     public var id: String { rawValue }
@@ -23,6 +25,8 @@ public enum POVDisplayRangeMode: String, CaseIterable, Identifiable {
         case .auto: return "AI自動"
         case .compactSnap: return "30cm浮き出し"
         case .wide: return "ワイド"
+        case .semiCircle: return "半円アーチ"
+        case .fullCircle: return "360度真円"
         case .zeroStatic: return "0cm静止ストロボ"
         }
     }
@@ -32,6 +36,8 @@ public enum POVDisplayRangeMode: String, CaseIterable, Identifiable {
         case .auto: return "sparkles"
         case .compactSnap: return "hand.raised.fill"
         case .wide: return "arrow.left.and.right"
+        case .semiCircle: return "arc"
+        case .fullCircle: return "circle"
         case .zeroStatic: return "bolt.fill"
         }
     }
@@ -41,6 +47,8 @@ public enum POVDisplayRangeMode: String, CaseIterable, Identifiable {
         case .auto: return "腕の疲労に合わせて、ワイド ⇄ 30cm手首 ⇄ 0cm静止ストロボをAIがリアルタイムに自動選択。"
         case .compactSnap: return "腕を上げずに手首の高速スナップ（約25〜35cm）だけで、文字が空間に立体的に浮き出るモード。"
         case .wide: return "頭上で大きく左右に振り、遠方の救助者やヘリに向けて文字を大展開するモード。"
+        case .semiCircle: return "180度の半円アーチを描くように振り、長文を空中にマッピングするモード。"
+        case .fullCircle: return "スマホを円形（風車のように）回し続け、360度全方位に文字を投影するモード。"
         case .zeroStatic: return "体力が尽きて振れなくなった時、画面全体を使って一文字ずつ超高輝度ストロボ点滅させるモード。"
         }
     }
@@ -51,7 +59,7 @@ public enum POVDisplayRangeMode: String, CaseIterable, Identifiable {
 public final class MotionDetector: ObservableObject {
     public static let shared = MotionDetector()
     
-    private let motionManager = CMMotionManager()
+    public let motionManager = CMMotionManager()
     
     // 公開プロパティ
     @Published public private(set) var currentPhase: SwingPhase = .forward
@@ -109,6 +117,12 @@ public final class MotionDetector: ObservableObject {
     private var simulationTimer: Timer?
     private var simulationPhase: Double = 0.0
     
+    // 新規追加: 平行移動（加速度）のトラッキング用
+    private var lateralVelocity: Double = 0.0
+    
+    // 新規追加: 円形（風車）モードのトラッキング用
+    public var isWindmillMode: Bool = false
+    private var continuousRotationTheta: Double = 0.0
     private init() {
         loadCalibration()
         startStaticStrobeTimer()
@@ -187,7 +201,25 @@ public final class MotionDetector: ObservableObject {
         let rawGyro: Double
         switch direction {
         case .horizontal:
-            rawGyro = motion.rotationRate.z
+            // ジャイロ（回転）の抽出
+            let gx = motion.gravity.x
+            let gy = motion.gravity.y
+            let gz = motion.gravity.z
+            let rx = motion.rotationRate.x
+            let ry = motion.rotationRate.y
+            let rz = motion.rotationRate.z
+            let rotationGyro = -(rx * gx + ry * gy + rz * gz)
+            
+            // 加速度（平行移動）の抽出
+            // スマホの姿勢に依存せず、常に重力に直交する「左右」の加速度を計算
+            let rightAccel = motion.userAcceleration.x * (-gy) + motion.userAcceleration.y * gx
+            self.lateralVelocity += rightAccel * dt
+            self.lateralVelocity *= 0.85 // ドリフトを防ぐリーキー積分器
+            
+            // センサーフュージョン（回転 + 平行移動）
+            // これにより、手首を固定して肩幅でスライドさせただけでも正確にスイングを検知可能！
+            rawGyro = rotationGyro + (self.lateralVelocity * 3.0)
+            
         case .vertical:
             rawGyro = motion.rotationRate.x
         }
@@ -230,6 +262,15 @@ public final class MotionDetector: ObservableObject {
         // 手動選択されている場合はそのモードを強制適用
         if selectedRangeMode != .auto && activeRangeMode != selectedRangeMode {
             activeRangeMode = selectedRangeMode
+            if selectedRangeMode == .fullCircle {
+                self.isWindmillMode = true
+            } else if selectedRangeMode == .semiCircle {
+                self.isWindmillMode = false
+                self.learnedStrokeWidth = 1.0 // 広めに固定
+            } else {
+                self.isWindmillMode = false
+            }
+            
             // 30cm手首モードに切り替わった時は、手首の振れ幅（約18度=0.32rad）に即座にプリセット
             if activeRangeMode == .compactSnap && (learnedStrokeWidth > 0.60 || learnedStrokeWidth < 0.18) {
                 learnedStrokeWidth = 0.32
@@ -242,20 +283,43 @@ public final class MotionDetector: ObservableObject {
             self.isUpsideDown = gravity.y > 0.40
         }
         
-        // 頭上スイング自動検知（頭上に掲げて左右に振ると自動でPOVフルスクリーン発光開始＆リアルタイム速度同期）
+        // 頭上スイング＆円形（風車）モード自動検知
         let isOverhead = !isFlat && (abs(gravity.y) > 0.30 || abs(gravity.z) < 0.70)
         let isFastSwing = self.swingIntensity > 0.8
         
-        if isOverhead && isFastSwing {
-            swingTriggerCounter += 1
-            if swingTriggerCounter >= 4 { // 約0.04秒で即座に反応
-                if !self.isOverheadSwinging {
-                    self.isOverheadSwinging = true
+        if isOverhead {
+            // 風車モード（円形スイング）の検知: 同一方向に継続して360度以上回転しているか
+            if gyro > 2.0 { // 右回転
+                continuousRotationTheta += gyro * dt
+                if continuousRotationTheta > 2 * .pi {
+                    self.isWindmillMode = true
                 }
-                self.isRealtimeOverheadSync = true
+            } else if gyro < -2.0 { // 左回転
+                continuousRotationTheta += gyro * dt
+                if continuousRotationTheta < -2 * .pi {
+                    self.isWindmillMode = true
+                }
+            } else {
+                // 回転が止まるか逆転したらリセット
+                if abs(gyro) < 0.5 {
+                    continuousRotationTheta = 0.0
+                    self.isWindmillMode = false
+                }
+            }
+            
+            if isFastSwing {
+                swingTriggerCounter += 1
+                if swingTriggerCounter >= 4 { // 約0.04秒で即座に反応
+                    if !self.isOverheadSwinging {
+                        self.isOverheadSwinging = true
+                    }
+                    self.isRealtimeOverheadSync = true
+                }
             }
         } else if isFlat && isQuiet {
             swingTriggerCounter = 0
+            continuousRotationTheta = 0.0
+            self.isWindmillMode = false
             if self.isOverheadSwinging {
                 self.isOverheadSwinging = false
             }
@@ -294,41 +358,57 @@ public final class MotionDetector: ObservableObject {
             handleTurnaround(isMovingPositive: false, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
         }
         
-        // 4. 【頂点真っ暗ゾーン完全撤廃 ＆ 全文字空間ワイド展開】
-        // 30cm手首モード時は手首の狭い振れ幅（0.15〜0.45rad=約9〜25度）に超高感度追従。ワイドモード時は0.40〜2.4rad。
-        let minClampWidth = isCompact ? 0.15 : 0.40
-        let maxClampWidth = isCompact ? 0.45 : 2.40
-        let width = min(max(learnedStrokeWidth * strokeSensitivity, minClampWidth), maxClampWidth)
-        
-        // 直近スイング活動中（往復中）判定: 最後の折り返しから1周期以内ならアクティブ
+        // 4. 【描画マッピング: 円形モード or PLL仮想振り子】
         let isRecentlySwinging = now.timeIntervalSince(lastTurnTime) < max(self.roundTripDuration * 1.5, 0.45)
         
-        if gyro > 0.02 || (currentPhase == .forward && isRecentlySwinging && gyro >= -turnHysteresis) {
-            // 往路（正方向）スイング中、または右端頂点への到達・折り返し瞬間
-            self.currentPhase = .forward
-            let strokeDelta = max(currentTheta - swingStartTheta, 0.0)
-            let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
-            
+        if self.isWindmillMode {
+            // 円形（風車）モード：ジャイロの絶対角度（360度ループ）で文字を空間に全方位固定する
+            // 360度 (2π) を1周期として、0.0〜1.0 にシームレスにマッピング
             self.isEmitting = true
-            self.strokeProgress = rawProgress // 0.0(左端) 〜 1.0(右端)まで欠けなく全域発光
+            self.currentPhase = gyro > 0 ? .forward : .backward
             
-        } else if gyro < -0.02 || (currentPhase == .backward && isRecentlySwinging && gyro <= turnHysteresis) {
-            // 復路（負方向）スイング中、または左端頂点への到達・折り返し瞬間
-            self.currentPhase = .backward
-            let strokeDelta = max(swingStartTheta - currentTheta, 0.0)
-            let rawProgress = min(max(strokeDelta / width, 0.0), 1.0)
+            // continuousRotationThetaは無限に増減するので、2πで割った余りを使う
+            var wrappedTheta = continuousRotationTheta.truncatingRemainder(dividingBy: 2 * .pi)
+            if wrappedTheta < 0 { wrappedTheta += 2 * .pi } // 0〜2πに正規化
             
-            self.isEmitting = true
-            self.strokeProgress = rawProgress // 0.0(右端) 〜 1.0(左端)まで欠けなく全域発光
+            self.strokeProgress = wrappedTheta / (2 * .pi)
             
-        } else if isRecentlySwinging {
-            // 頂点のゼロクロス極小瞬間（直前フェーズの端スライスを維持し、真っ暗な隙間を完全ゼロ化）
-            self.isEmitting = true
-            self.strokeProgress = (currentPhase == .forward) ? 1.0 : 0.0
         } else {
-            // 完全静止域（手が本当に止まった時のみ消灯）
-            self.isEmitting = false
-            self.strokeProgress = 0.0
+            // 従来のPLL仮想振り子による究極の描画安定化
+            if gyro > turnHysteresis {
+                self.currentPhase = .forward
+            } else if gyro < -turnHysteresis {
+                self.currentPhase = .backward
+            }
+            
+            if isRecentlySwinging && activeRangeMode != .zeroStatic {
+                let halfTrip = max(self.roundTripDuration / 2.0, 0.05)
+                let elapsed = now.timeIntervalSince(lastTurnTime)
+                
+                // 0.0 〜 1.0 の線形プログレス（折り返し予想時間を超えたら1.0で待機）
+                let linearProgress = min(elapsed / halfTrip, 1.0)
+                
+                // コサインカーブを用いた自然な加減速マッピング（両端でゆっくり、中央で最速）
+                let idealProgress = (1.0 - cos(.pi * linearProgress)) / 2.0
+                
+                // 中央の有効描画幅（padding）を適用して、画面幅いっぱいに文字を表示する
+                let effectiveRatio = isCompact ? 0.90 : 0.70
+                let paddingRatio = (1.0 - effectiveRatio) / 2.0
+                let mappedProgress = (idealProgress - paddingRatio) / effectiveRatio
+                
+                if mappedProgress >= 0.0 && mappedProgress <= 1.0 {
+                    self.isEmitting = true
+                    self.strokeProgress = mappedProgress
+                } else {
+                    self.isEmitting = false
+                    self.strokeProgress = mappedProgress < 0.0 ? 0.0 : 1.0
+                }
+            } else if activeRangeMode == .zeroStatic {
+                self.isEmitting = true
+            } else {
+                self.isEmitting = false
+                self.strokeProgress = 0.0
+            }
         }
         
         lastGyroZ = gyro
@@ -357,7 +437,7 @@ public final class MotionDetector: ObservableObject {
         lastTurnTime = now
         
         let minAllowedWidth = isCompact ? 0.14 : 0.38
-        let maxAllowedWidth = isCompact ? 0.46 : 2.50
+        let maxAllowedWidth = isCompact ? 1.50 : 2.50
         
         if isMovingPositive {
             // 「右→左」から「左→右」への切り返し（左端に到達！往路スタート）

@@ -69,6 +69,14 @@ public struct TutorialHelpSheet: View {
                         title: "6. Apple Intelligence 状況判断 & MCP",
                         content: "急激なGショック（衝突・滑落）や高度急変をCoreMotionでオンデバイス推論（オフライン完全対応）。自動で最適な救難サインを提案します。またMCP（Model Context Protocol）エージェントとの連携もサポートしています。"
                     )
+                    
+                    // 7. 緊急救難SOSメール自動配信
+                    guideCard(
+                        icon: "envelope.badge.shield.half.filled.fill",
+                        iconColor: .red,
+                        title: "7. 緊急SOSメール設定とVercelリンクの注意",
+                        content: "【設定方法】\n右上の「設定アイコン」から「緊急救難SOSメール自動配信」の項目に進み、通知先にご家族などのメールアドレスを入力してください。\n\n【ご家族がリンクを開けない場合（Vercelログイン画面）】\nご家族がメールのGPS地図リンクを開いた際、「Vercel」のログイン画面が表示されることがあります。これは開発中環境（Vercel Protection）の制限によるもので、ご家族がアカウントを作成する必要はありません。\nVercelのプロジェクト設定（Settings > Deployment Protection）で「Vercel Authentication」を無効化するか、本番（Production）ドメインのURLを使用することで、誰でも即座に地図を見られるようになります。"
+                    )
                 }
                 .padding()
             }

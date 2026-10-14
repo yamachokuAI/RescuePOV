@@ -6,3 +6,4 @@ project.xcworkspace/xcuserdata/
 build/
 .vercel
 .env*
+*.mp4

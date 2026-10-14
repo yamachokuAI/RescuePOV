@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RescuePOV Mac Simulator</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: black;
+            color: white;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            transition: background-color 0.05s;
+        }
+        h1 { margin-bottom: 20px; }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            width: 80%;
+            max-width: 600px;
+        }
+        button {
+            padding: 30px;
+            font-size: 24px;
+            font-weight: bold;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            color: black;
+            transition: transform 0.1s;
+        }
+        button:active { transform: scale(0.95); }
+        #btn-fire { background-color: #ff3b30; color: white; }
+        #btn-water { background-color: #32ade6; color: white; }
+        #btn-thunder { background-color: #ffcc00; }
+        #btn-grass { background-color: #34c759; color: white; }
+        #btn-stop {
+            margin-top: 30px;
+            background-color: #8e8e93;
+            color: white;
+            width: 80%;
+            max-width: 600px;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: rgba(0,0,0,0.8);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui-layer">
+        <h1>RescuePOV 対戦シミュレーター</h1>
+        <p>ボタンを押すと画面全体が激しく点滅し、iPhoneカメラに対して魔法の属性を送信します。</p>
+        <div class="grid">
+            <button id="btn-fire" onclick="startFlashing('red')">炎 (Fire)</button>
+            <button id="btn-water" onclick="startFlashing('cyan')">水 (Water)</button>
+            <button id="btn-thunder" onclick="startFlashing('yellow')">雷 (Thunder)</button>
+            <button id="btn-grass" onclick="startFlashing('lime')">草 (Grass)</button>
+        </div>
+        <button id="btn-stop" onclick="stopFlashing()">停止 (Stop)</button>
+    </div>
+
+    <script>
+        let flashInterval = null;
+        let isColorOn = false;
+        
+        function startFlashing(color) {
+            stopFlashing();
+            document.getElementById('ui-layer').style.display = 'none';
+            
+            // 15Hz (約66ms) で点滅させることで、POVの往復運動をシミュレート
+            flashInterval = setInterval(() => {
+                document.body.style.backgroundColor = isColorOn ? 'black' : color;
+                isColorOn = !isColorOn;
+            }, 66);
+            
+            // 画面のどこかをタップ/クリックで停止
+            document.body.onclick = stopFlashing;
+        }
+        
+        function stopFlashing() {
+            if (flashInterval) {
+                clearInterval(flashInterval);
+                flashInterval = null;
+            }
+            document.body.style.backgroundColor = 'black';
+            document.getElementById('ui-layer').style.display = 'flex';
+            document.body.onclick = null;
+        }
+    </script>
+</body>
+</html>
