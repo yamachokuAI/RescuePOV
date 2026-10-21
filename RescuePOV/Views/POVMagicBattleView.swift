@@ -45,7 +45,7 @@ public struct POVMagicBattleView: View {
                     direction: element == .thunder ? .vertical : .horizontal,
                     color: .white,
                     slitWidth: 90.0, // HELPと同じ90.0
-                    isDiagonal: element == .grass,
+                    isDiagonal: false,
                     diagonalAngle: element == .grass ? grassAngle : nil,
                     activeDotRatio: 0.82 // HELPと同じ
                 )
@@ -164,10 +164,26 @@ public struct POVMagicBattleView: View {
         .onAppear {
             totalMagicWins = Int(NSUbiquitousKeyValueStore.default.longLong(forKey: "totalMagicWins"))
             motionDetector.start(direction: .horizontal)
+            prepareSpeechAudioSession()
         }
         .onDisappear {
             colorDetector.stop()
             motionDetector.stop()
+        }
+    }
+    
+    /// 初回バトル開始時から確実に「3, 2, 1, Go!」が発声されるようオーディオセッションとSynthesizerをウォームアップ
+    private func prepareSpeechAudioSession() {
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try session.setActive(true)
+            // 初回のコールドスタートを防ぐ極小無音発声
+            let warmup = AVSpeechUtterance(string: " ")
+            warmup.volume = 0.01
+            synthesizer.speak(warmup)
+        } catch {
+            print("Speech AudioSession setup error: \(error)")
         }
     }
     
@@ -178,9 +194,11 @@ public struct POVMagicBattleView: View {
         myElement = nil
         battleResult = nil
     }
-
+    
     private func startSyncTimer() {
+        prepareSpeechAudioSession()
         gameState = .counting
+        countdownValue = -1 // 初回フレームでdiff==3だった場合も確実に検知して発声させる
         myElement = nil
         grassAngle = nil
         battleResult = nil
@@ -238,14 +256,16 @@ public struct POVMagicBattleView: View {
             self.myElement = element
             
             // サンダーの場合は縦振りなので、MotionDetectorを.verticalで再起動してstrokeProgressを縦軸(Y軸)に切り替える
+            let swingDirection: POVDirection = (element == .thunder) ? .vertical : .horizontal
             motionDetector.stop()
-            motionDetector.start(direction: element == .thunder ? .vertical : .horizontal)
+            motionDetector.start(direction: swingDirection)
             
-            // HELPと全く同じアルゴリズムで画像スライスを生成
+            // 24分割に凝縮し、120Hz OLED黒締め＆連続パン用のスライスを生成
             let uiImage = MagicImageGenerator.generateImage(for: element)
             self.myImageSlices = BitmapGenerator.shared.generateColorSlices(
                 from: uiImage,
-                targetSlices: 32
+                direction: swingDirection,
+                targetSlices: 24
             )
             
             // 効果音の再生 (.m4a)
@@ -412,6 +432,10 @@ public struct POVMagicBattleView: View {
     }
     
     private func speak(_ text: String) {
+        try? AVAudioSession.sharedInstance().setActive(true)
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
         utterance.rate = 0.55

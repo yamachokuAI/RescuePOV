@@ -111,7 +111,11 @@ public final class POVCanvasView: UIView {
             targetIndex = min(Int((1.0 - progress) * Double(count)), count - 1)
         }
         
-        if targetIndex != currentSliceIndex {
+        // フルカラーCGモード時は、1/120秒（1フレーム約8.3mm）ごとの連続パン（像の移動）を毎フレーム滑らかに描画更新する
+        if !imageSlices.isEmpty {
+            currentSliceIndex = max(0, targetIndex)
+            setNeedsDisplay()
+        } else if targetIndex != currentSliceIndex {
             currentSliceIndex = targetIndex
             setNeedsDisplay()
         }
@@ -141,19 +145,82 @@ public final class POVCanvasView: UIView {
             return
         }
         
-        // 【フルカラー画像モード】
+        // 【フルカラー画像モード：スリット窓固定 ＋ 内部像の120Hz連続パン（動画スクロール）方式】
         if !imageSlices.isEmpty {
-            let slice = imageSlices[currentSliceIndex]
+            // 手首モード（compactSnap）時は手首の狭い振れ幅に合わせてスリット幅を最適化、通常時は90pxフル幅
+            let effectiveSlitWidth: CGFloat = (detector.selectedRangeMode == .compactSnap)
+            ? max(slitWidth * 0.45, 36.0)
+            : slitWidth
             
-            let effectiveSlitWidth = detector.activeRangeMode == .compactSnap ? max(slitWidth * 0.30, 4.0) : slitWidth
-            let primaryStartX = (rect.width - effectiveSlitWidth) / 2.0
+            // 往路(左→右)と復路(右→左)で空間上の同じ位置に像がロックされるよう連続空間座標(0.0〜1.0)を算出
+            let rawProgress = CGFloat(detector.strokeProgress)
+            let spatialProgress = (detector.currentPhase == .forward) ? rawProgress : (1.0 - rawProgress)
             
             ctx.saveGState()
             // CoreGraphicsは左下原点のためY軸を反転
             ctx.translateBy(x: 0, y: rect.height)
             ctx.scaleBy(x: 1.0, y: -1.0)
             
-            ctx.draw(slice, in: CGRect(x: primaryStartX, y: 0, width: effectiveSlitWidth, height: rect.height))
+            // 24分割スライスを連結した全体仮想キャンバス幅（画面中を像が左→右、右→左へ連続パンする）
+            // スリット窓(90px)は画面中央に固定し、クリッピングマスクとして機能させる
+            if isDiagonal || diagonalAngle != nil {
+                let diagLength = hypot(rect.width, rect.height)
+                let angle = diagonalAngle ?? atan2(rect.width, rect.height)
+                ctx.translateBy(x: rect.midX, y: rect.midY)
+                ctx.rotate(by: -angle)
+                
+                let slitRect = CGRect(x: -effectiveSlitWidth / 2.0, y: -diagLength / 2.0, width: effectiveSlitWidth, height: diagLength)
+                ctx.clip(to: slitRect)
+                
+                // 24分割されたスライス群を仮想空間に並べ、現在の空間位置に合わせて窓の中を連続パンさせる
+                let totalVirtualWidth = effectiveSlitWidth * CGFloat(imageSlices.count) * 0.45
+                let panOffsetX = -effectiveSlitWidth / 2.0 - spatialProgress * (totalVirtualWidth - effectiveSlitWidth)
+                let singleSliceW = totalVirtualWidth / CGFloat(imageSlices.count)
+                
+                for (i, sliceImg) in imageSlices.enumerated() {
+                    let drawX = panOffsetX + CGFloat(i) * singleSliceW
+                    if drawX + singleSliceW >= slitRect.minX && drawX <= slitRect.maxX {
+                        ctx.draw(sliceImg, in: CGRect(x: drawX, y: -diagLength / 2.0, width: singleSliceW + 1.0, height: diagLength))
+                    }
+                }
+            } else {
+                switch direction {
+                case .horizontal:
+                    // 炎・水（横振り）：中央に90pxの縦スリット窓を開け、中の像を左右に連続パンさせる
+                    let primaryStartX = (rect.width - effectiveSlitWidth) / 2.0
+                    let slitRect = CGRect(x: primaryStartX, y: 0, width: effectiveSlitWidth, height: rect.height)
+                    ctx.clip(to: slitRect)
+                    
+                    let totalVirtualWidth = effectiveSlitWidth * CGFloat(imageSlices.count) * 0.45
+                    let panOffsetX = primaryStartX - spatialProgress * (totalVirtualWidth - effectiveSlitWidth)
+                    let singleSliceW = totalVirtualWidth / CGFloat(imageSlices.count)
+                    
+                    for (i, sliceImg) in imageSlices.enumerated() {
+                        let drawX = panOffsetX + CGFloat(i) * singleSliceW
+                        if drawX + singleSliceW >= slitRect.minX && drawX <= slitRect.maxX {
+                            ctx.draw(sliceImg, in: CGRect(x: drawX, y: 0, width: singleSliceW + 1.0, height: rect.height))
+                        }
+                    }
+                    
+                case .vertical:
+                    // サンダー（縦振り）：中央に90pxの横（水平）スリット窓を開け、中の像を上下に連続パンさせる
+                    let primaryStartY = (rect.height - effectiveSlitWidth) / 2.0
+                    let slitRect = CGRect(x: 0, y: primaryStartY, width: rect.width, height: effectiveSlitWidth)
+                    ctx.clip(to: slitRect)
+                    
+                    let totalVirtualHeight = effectiveSlitWidth * CGFloat(imageSlices.count) * 0.45
+                    let panOffsetY = primaryStartY - spatialProgress * (totalVirtualHeight - effectiveSlitWidth)
+                    let singleSliceH = totalVirtualHeight / CGFloat(imageSlices.count)
+                    
+                    for (i, sliceImg) in imageSlices.enumerated() {
+                        let drawY = panOffsetY + CGFloat(i) * singleSliceH
+                        if drawY + singleSliceH >= slitRect.minY && drawY <= slitRect.maxY {
+                            ctx.draw(sliceImg, in: CGRect(x: 0, y: drawY, width: rect.width, height: singleSliceH + 1.0))
+                        }
+                    }
+                }
+            }
+            
             ctx.restoreGState()
             return
         }

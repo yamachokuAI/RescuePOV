@@ -221,7 +221,14 @@ public final class MotionDetector: ObservableObject {
             rawGyro = rotationGyro + (self.lateralVelocity * 3.0)
             
         case .vertical:
-            rawGyro = motion.rotationRate.x
+            // 縦振り時も「X軸/Y軸回転 + 上下平行移動（加速度）」のセンサーフュージョンを適用
+            let verticalAccel = motion.userAcceleration.y + motion.userAcceleration.z
+            self.lateralVelocity += verticalAccel * dt
+            self.lateralVelocity *= 0.85
+            let dominantRotation = abs(motion.rotationRate.x) >= abs(motion.rotationRate.y)
+            ? motion.rotationRate.x
+            : motion.rotationRate.y
+            rawGyro = dominantRotation + (self.lateralVelocity * 3.0)
         }
         
         let gyro = invertSwingDirection ? -rawGyro : rawGyro
@@ -382,17 +389,26 @@ public final class MotionDetector: ObservableObject {
             }
             
             if isRecentlySwinging && activeRangeMode != .zeroStatic {
-                let halfTrip = max(self.roundTripDuration / 2.0, 0.05)
+                let halfTrip = max(self.roundTripDuration / 2.0, 0.04)
                 let elapsed = now.timeIntervalSince(lastTurnTime)
                 
-                // 0.0 〜 1.0 の線形プログレス（折り返し予想時間を超えたら1.0で待機）
+                // 1. 時間ベースの予測進行度
                 let linearProgress = min(elapsed / halfTrip, 1.0)
+                let timeBasedProgress = (1.0 - cos(.pi * linearProgress)) / 2.0
                 
-                // コサインカーブを用いた自然な加減速マッピング（両端でゆっくり、中央で最速）
-                let idealProgress = (1.0 - cos(.pi * linearProgress)) / 2.0
+                // 2. 物理角度ベースのダイレクト進行度（手首の急加速に遅れゼロで追従するため、16ms分の角速度位相進み補償をプラス）
+                let predictedTheta = currentTheta + gyro * 0.016
+                let safeStrokeWidth = max(learnedStrokeWidth, isCompact ? 0.22 : 0.45)
+                let angleDelta = abs(predictedTheta - swingStartTheta)
+                let angleBasedProgress = min(max(angleDelta / safeStrokeWidth, 0.0), 1.0)
                 
-                // 中央の有効描画幅（padding）を適用して、画面幅いっぱいに文字を表示する
-                let effectiveRatio = isCompact ? 0.90 : 0.70
+                // 手首モード（isCompact）時は角度ダイレクト追従を75%優先して遅れを根絶！通常時も45%ブレンドしてキレを向上
+                let idealProgress = isCompact
+                ? (angleBasedProgress * 0.75 + timeBasedProgress * 0.25)
+                : (angleBasedProgress * 0.45 + timeBasedProgress * 0.55)
+                
+                // 中央の有効描画幅（padding）を適用して、手首モードでは端から端まで95%即座に発光
+                let effectiveRatio = isCompact ? 0.95 : 0.76
                 let paddingRatio = (1.0 - effectiveRatio) / 2.0
                 let mappedProgress = (idealProgress - paddingRatio) / effectiveRatio
                 

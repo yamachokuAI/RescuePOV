@@ -288,26 +288,167 @@ public final class BitmapGenerator {
         return slices
     }
     
-    /// フルカラー画像(UIImage)を垂直方向の帯(CGImage)のリストに分割します（高画質POV用）
+    /// 120Hz OLED向けに「黒締め（0%完全漆黒）」＆「最大輝度ブースト」を施した
+    /// 連続パン（空間スクロール）用の単一マスターCGImageを生成します
+    public func generatePOVContinuousImage(
+        from image: UIImage,
+        direction: POVDirection = .horizontal
+    ) -> CGImage? {
+        return preparePOVOptimizedCGImage(from: image, rotate90ForVertical: direction == .vertical)
+    }
+    
+    /// フルカラー画像(UIImage)をPOV残像向けに超高輝度・高コントラスト化し、
+    /// 24分割に凝縮した帯(CGImage)のリストを生成します
     public func generateColorSlices(
         from image: UIImage,
-        targetSlices: Int = 32
+        direction: POVDirection = .horizontal,
+        targetSlices: Int = 24
     ) -> [CGImage] {
-        guard let cgImage = image.cgImage else { return [] }
+        guard let processedCGImage = preparePOVOptimizedCGImage(from: image, rotate90ForVertical: direction == .vertical) else {
+            return []
+        }
         
-        let width = cgImage.width
-        let height = cgImage.height
-        let sliceWidth = max(1, width / targetSlices)
-        
+        let width = processedCGImage.width
+        let height = processedCGImage.height
         var slices: [CGImage] = []
-        for i in 0..<targetSlices {
-            let x = i * sliceWidth
-            let rect = CGRect(x: x, y: 0, width: sliceWidth, height: height)
-            if let cropped = cgImage.cropping(to: rect) {
-                slices.append(cropped)
+        
+        switch direction {
+        case .horizontal:
+            // 24分割の窓として切り出しつつ、各スライスが連続パンの窓幅を持つように切り出す
+            let windowWidth = max(1, width / targetSlices)
+            for i in 0..<targetSlices {
+                let x = min(i * windowWidth, max(0, width - windowWidth))
+                let rect = CGRect(x: x, y: 0, width: windowWidth, height: height)
+                if let cropped = processedCGImage.cropping(to: rect) {
+                    slices.append(cropped)
+                }
+            }
+        case .vertical:
+            let windowHeight = max(1, height / targetSlices)
+            for i in 0..<targetSlices {
+                let y = min(i * windowHeight, max(0, height - windowHeight))
+                let rect = CGRect(x: 0, y: y, width: width, height: windowHeight)
+                if let cropped = processedCGImage.cropping(to: rect) {
+                    slices.append(cropped)
+                }
             }
         }
         return slices
+    }
+    
+    /// 120Hz 有機EL（OLED）端末向けに、上下の黒余白を自動カットして画面の上から下まで100%拡大し、
+    /// 黒締め＆最大輝度ブーストを施すプリプロセッサ
+    private func preparePOVOptimizedCGImage(from image: UIImage, rotate90ForVertical: Bool) -> CGImage? {
+        let workSize = CGSize(width: 720, height: 480)
+        let width = Int(workSize.width)
+        let height = Int(workSize.height)
+        
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        var tempRaw = [UInt8](repeating: 0, count: width * height * 4)
+        
+        guard let tempCtx = CGContext(
+            data: &tempRaw,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return image.cgImage
+        }
+        
+        // 1. まず元画像をそのまま展開して、光っている部分の「上端(minY)〜下端(maxY)」を検出する
+        tempCtx.setFillColor(UIColor.black.cgColor)
+        tempCtx.fill(CGRect(origin: .zero, size: workSize))
+        UIGraphicsPushContext(tempCtx)
+        // アスペクト比を維持しつつ横幅いっぱいに拡大（端は見切れてOK）
+        let imgSize = image.size
+        let scale = max(workSize.width / max(imgSize.width, 1), workSize.height / max(imgSize.height, 1)) * 1.15
+        let scaledW = imgSize.width * scale
+        let scaledH = imgSize.height * scale
+        let drawOrigin = CGPoint(x: (workSize.width - scaledW) / 2.0, y: (workSize.height - scaledH) / 2.0)
+        image.draw(in: CGRect(origin: drawOrigin, size: CGSize(width: scaledW, height: scaledH)))
+        UIGraphicsPopContext()
+        
+        var minY = height
+        var maxY = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let offset = (y * width + x) * 4
+                let maxC = max(Int(tempRaw[offset]), max(Int(tempRaw[offset + 1]), Int(tempRaw[offset + 2])))
+                if maxC >= 80 {
+                    if y < minY { minY = y }
+                    if y > maxY { maxY = y }
+                }
+            }
+        }
+        
+        // 2. 検出した上下の有効領域（minY...maxY）を切り出し、画面の端から端（高さ100%）まで引き伸ばす
+        let croppedTempImage: CGImage?
+        if maxY > minY, let fullCG = tempCtx.makeImage() {
+            let cropRect = CGRect(x: 0, y: minY, width: width, height: max(1, maxY - minY + 1))
+            croppedTempImage = fullCG.cropping(to: cropRect)
+        } else {
+            croppedTempImage = tempCtx.makeImage()
+        }
+        
+        // 3. 最終キャンバス（サンダーの縦振り時は90度回転サイズ）に端から端まで100%拡大描画
+        let finalSize = rotate90ForVertical ? CGSize(width: 480, height: 720) : CGSize(width: 720, height: 480)
+        let fWidth = Int(finalSize.width)
+        let fHeight = Int(finalSize.height)
+        var rawData = [UInt8](repeating: 0, count: fWidth * fHeight * 4)
+        
+        guard let ctx = CGContext(
+            data: &rawData,
+            width: fWidth,
+            height: fHeight,
+            bitsPerComponent: 8,
+            bytesPerRow: fWidth * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ), let srcCG = croppedTempImage else {
+            return image.cgImage
+        }
+        
+        ctx.setFillColor(UIColor.black.cgColor)
+        ctx.fill(CGRect(origin: .zero, size: finalSize))
+        
+        if rotate90ForVertical {
+            // サンダー（縦振り）時：90度回転して横幅・縦幅を端から端までフル充填
+            ctx.saveGState()
+            ctx.translateBy(x: finalSize.width / 2.0, y: finalSize.height / 2.0)
+            ctx.rotate(by: .pi / 2.0)
+            ctx.draw(srcCG, in: CGRect(x: -finalSize.height / 2.0, y: -finalSize.width / 2.0, width: finalSize.height, height: finalSize.width))
+            ctx.restoreGState()
+        } else {
+            // 炎・水・草：携帯の長い方の高さを上から下まで100%使ってフル充填
+            ctx.draw(srcCG, in: CGRect(origin: .zero, size: finalSize))
+        }
+        
+        // 4. OLED黒締め（輝度80未満は完全消灯0%）＆ 発光部の最大輝度ブースト
+        for y in 0..<fHeight {
+            for x in 0..<fWidth {
+                let offset = (y * fWidth + x) * 4
+                let r = Int(rawData[offset])
+                let g = Int(rawData[offset + 1])
+                let b = Int(rawData[offset + 2])
+                let maxC = max(r, max(g, b))
+                
+                if maxC < 80 {
+                    rawData[offset] = 0
+                    rawData[offset + 1] = 0
+                    rawData[offset + 2] = 0
+                } else {
+                    let boost = 255.0 / Double(maxC)
+                    rawData[offset] = UInt8(min(255.0, Double(r) * boost * 1.25))
+                    rawData[offset + 1] = UInt8(min(255.0, Double(g) * boost * 1.25))
+                    rawData[offset + 2] = UInt8(min(255.0, Double(b) * boost * 1.25))
+                }
+            }
+        }
+        
+        return ctx.makeImage()
     }
     
     /// 画像(UIImage)を2次元ブール配列（スライスのリスト）に変換します
