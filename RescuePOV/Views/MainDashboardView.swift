@@ -724,45 +724,81 @@ public struct MainDashboardView: View {
     @ViewBuilder
     private var wordInputFieldRow: some View {
         HStack(spacing: 8) {
-            Image(systemName: "pencil.and.outline")
-                .foregroundColor(operationalMode.accentColor)
-                .font(.system(size: 14, weight: .bold))
-            
-            TextField("表示文字を入力", text: $targetText)
-                .font(.system(size: 16, weight: .black, design: .monospaced))
-                .foregroundColor(.white)
-                .onTapGesture {
-                    selectCompartment(.wordPalette)
-                }
-            
-            Button(action: {
-                selectCompartment(.wordPalette)
-                selectedDirection = (selectedDirection == .horizontal) ? .vertical : .horizontal
-                motionDetector.start(direction: selectedDirection)
-            }) {
-                HStack(spacing: 4) {
-                    Image(systemName: selectedDirection.iconName)
-                    Text(selectedDirection == .horizontal ? "横振り" : "縦振り")
-                }
-                .font(.system(size: 10.5, weight: .bold))
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(Color.white.opacity(0.18)))
-                .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
-                .foregroundColor(.white)
-            }
-            
-            if !targetText.isEmpty {
-                Button(action: { targetText = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.white.opacity(0.6))
-                }
-            }
+            wordInputIcon
+            wordInputTextField
+            directionToggleButton
+            wordClearButton
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.32)))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(0.2), lineWidth: 0.8))
+        .background(wordInputRowBackground)
+        .overlay(wordInputRowBorder)
+    }
+    
+    @ViewBuilder
+    private var wordInputIcon: some View {
+        Image(systemName: "pencil.and.outline")
+            .foregroundColor(operationalMode.accentColor)
+            .font(.system(size: 14, weight: .bold))
+    }
+    
+    @ViewBuilder
+    private var wordInputTextField: some View {
+        TextField("表示文字を入力", text: $targetText)
+            .font(.system(size: 16, weight: .black, design: .monospaced))
+            .foregroundColor(.white)
+            .onTapGesture {
+                selectCompartment(.wordPalette)
+            }
+    }
+    
+    @ViewBuilder
+    private var directionToggleLabel: some View {
+        let isHorizontal = (selectedDirection == .horizontal)
+        let title: String = isHorizontal ? "横振り" : "縦振り"
+        HStack(spacing: 4) {
+            Image(systemName: selectedDirection.iconName)
+            Text(title)
+        }
+        .font(.system(size: 10.5, weight: .bold))
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(Color.white.opacity(0.18)))
+        .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
+        .foregroundColor(.white)
+    }
+    
+    @ViewBuilder
+    private var directionToggleButton: some View {
+        Button(action: {
+            selectCompartment(.wordPalette)
+            selectedDirection = (selectedDirection == .horizontal) ? .vertical : .horizontal
+            motionDetector.start(direction: selectedDirection)
+        }) {
+            directionToggleLabel
+        }
+    }
+    
+    @ViewBuilder
+    private var wordClearButton: some View {
+        if !targetText.isEmpty {
+            Button(action: { targetText = "" }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.white.opacity(0.6))
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var wordInputRowBackground: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .fill(Color.black.opacity(0.32))
+    }
+    
+    @ViewBuilder
+    private var wordInputRowBorder: some View {
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .stroke(Color.white.opacity(0.2), lineWidth: 0.8)
     }
     
     @ViewBuilder
@@ -942,37 +978,6 @@ public struct MainDashboardView: View {
                         endPoint: .bottomTrailing
                     )
                 )
-        }
-    }
-    
-    @ViewBuilder
-    private var transmissionButtonBorder: some View {
-        RoundedRectangle(cornerRadius: 24, style: .continuous)
-            .stroke(
-                LinearGradient(
-                    colors: [.white, .white.opacity(0.35)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1.8
-            )
-    }
-    
-    @ViewBuilder
-    private var transmissionButtonBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
-        ZStack {
-            shape.fill(.ultraThinMaterial)
-            shape.fill(
-                LinearGradient(
-                    colors: [
-                        operationalMode.accentColor.opacity(0.85),
-                        operationalMode.secondaryColor.opacity(0.65)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
         }
     }
     
