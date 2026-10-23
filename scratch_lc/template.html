@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RescuePOV 光通信 Mac実験ツール</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #05060a; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  header { padding: 18px 24px 0; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  p.sub { margin: 0; color: #8e93a3; font-size: 13px; line-height: 1.6; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; padding: 18px 24px 40px; max-width: 1100px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  section { background: #11131c; border: 1px solid #23273a; border-radius: 16px; padding: 16px; }
+  h2 { margin: 0 0 12px; font-size: 15px; color: #6ee7ff; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+  .tab { flex: 1; padding: 8px; border-radius: 8px; border: 1px solid #2c3148; background: #1a1d2b; color: #aab0c4; cursor: pointer; font-weight: 700; }
+  .tab.on { background: #0e5a6b; color: #fff; border-color: #fff; }
+  .words { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .word { background: #1a1d2b; border: 1px solid #2c3148; border-radius: 10px; color: #fff; padding: 8px 4px; cursor: pointer; font-size: 12px; font-weight: 800; }
+  .word small { display: block; font-weight: 500; color: #9aa0b5; margin-top: 2px; }
+  .word.sel { background: #0e5a6b; border-color: #fff; }
+  input[type=text] { width: 100%; box-sizing: border-box; padding: 12px; font-size: 18px; font-weight: 700; border-radius: 10px; border: 1px solid #2c3148; background: #0b0d14; color: #fff; font-family: ui-monospace, Menlo, monospace; }
+  button.main { width: 100%; margin-top: 12px; padding: 14px; font-size: 16px; font-weight: 800; border: 0; border-radius: 12px; cursor: pointer; color: #fff; background: #ff8a00; }
+  button.main.stop { background: #e5383b; } button.main.rx { background: #2f6bff; } button.main.mic { background: #444a63; }
+  button.main.mic.on { background: #d0312d; }
+  .bits { display: flex; gap: 1px; margin-top: 12px; flex-wrap: wrap; }
+  .bit { width: 10px; height: 14px; border-radius: 2px; border: 1.5px solid transparent; }
+  .bit.pre { background: rgba(255,153,0,.15); } .bit.pre.on { background: rgba(255,153,0,.9); }
+  .bit.dat { background: rgba(0,200,255,.15); } .bit.dat.on { background: rgba(0,200,255,.9); }
+  .bit.cur { border-color: #fff; }
+  #decoded { text-align: center; padding: 14px 0; border-radius: 12px; background: #0b0d14; border: 1px solid #23273a; margin-bottom: 12px; }
+  #decoded .big { font-size: 32px; font-weight: 900; color: #38e07b; word-break: break-all; padding: 0 10px; }
+  #decoded .big.wait { color: #555b70; font-size: 22px; }
+  #decoded .id { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #aab0c4; margin-top: 4px; }
+  canvas { width: 100%; height: 100px; background: #000; border-radius: 8px; display: block; }
+  video { width: 100%; border-radius: 8px; background: #000; max-height: 220px; object-fit: cover; margin-bottom: 10px; }
+  #status { font-size: 13px; margin-top: 10px; line-height: 1.6; }
+  .note { font-size: 12px; color: #7b8196; line-height: 1.7; margin-top: 10px; }
+  #flash { position: fixed; inset: 0; background: #000; z-index: 999; display: none; cursor: pointer; }
+  #flash span { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); color: #555; font-size: 12px; }
+  .hide { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔦 RescuePOV 光通信 Mac実験ツール</h1>
+  <p class="sub">iPhoneアプリの「光通信」と同一プロトコル（定型語: 1bit=0.2秒 / 自由文字: 1bit=0.15秒、ハミング誤り訂正＋連送多数決）。<br>
+  <b>送信</b>: Mac画面を白黒に点滅 → iPhone背面カメラで受信 ／ <b>受信</b>: iPhoneの背面ライトをMacのWebカメラへ向けて受信</p>
+</header>
+<main>
+  <section>
+    <h2>① 送信（Mac画面の点滅 → iPhoneで受信）</h2>
+    <div class="tabs"><button class="tab on" id="tabPreset">定型語</button><button class="tab" id="tabText">自由文字・音声</button></div>
+    <div id="presetBox"><div class="words" id="words"></div></div>
+    <div id="textBox" class="hide">
+      <input type="text" id="freeText" value="HELP" maxlength="24" placeholder="送りたい文字">
+      <div class="note" id="textInfo"></div>
+      <button class="main mic" id="micBtn">🎤 音声入力 OFF（Chrome/Safariで利用可）</button>
+      <div class="note">音声入力ONで話すとリアルタイムに送信文字へ反映。5秒間話さないと元の文字に戻ります。</div>
+    </div>
+    <div class="bits" id="txbits"></div>
+    <button class="main" id="txBtn">全画面点滅で送信開始</button>
+    <p class="note">iPhoneの光通信画面で「受信」→ 背面カメラをMac画面に向け、枠に画面を入れてください。感度スライダーで白黒の波形が大きく上下する位置に調整します。画面クリック／Escで停止。<br>
+    文字モードは受信まで約12秒〜かかります。</p>
+  </section>
+
+  <section>
+    <h2>② 受信（iPhoneのライト → MacのWebカメラ）</h2>
+    <video id="cam" autoplay playsinline muted></video>
+    <div id="decoded"><div class="big wait">— 受信待ち —</div><div class="id"></div></div>
+    <canvas id="wave" width="600" height="100"></canvas>
+    <div id="status">カメラ未開始</div>
+    <button class="main rx" id="rxBtn">Webカメラ受信を開始</button>
+    <p class="note">iPhoneの光通信画面で「送信」（定型語または自由文字）を開始し、背面ライトをMacのカメラに向けてください。<code>http://localhost:8000/mac_lightcomm.html</code> で開きます。</p>
+  </section>
+</main>
+<div id="flash"><span>クリックまたは Esc で停止</span></div>
+
+<script>
+const WORDS = [
+ [1,"HELP","たすけて"],[2,"SOS","SOS"],[3,"OK","大丈夫"],[4,"YES","はい"],[5,"NO","いいえ"],
+ [6,"WATER","水が欲しい"],[7,"FOOD","食べ物が欲しい"],[8,"MEDICAL","医療が必要"],[9,"INJURED","けが人がいる"],
+ [10,"TRAPPED","閉じ込められた"],[11,"FIRE","火事"],[12,"FLOOD","浸水・洪水"],[13,"LOST","道に迷った"],
+ [14,"HERE","ここにいる"],[15,"COMING","向かっている"],[16,"WAIT","待って"],[17,"SAFE","安全"],
+ [18,"DANGER","危険"],[19,"COLD","寒い"],[20,"HOT","暑い"],[21,"BATTERY LOW","電池が少ない"],
+ [22,"STAY","動かないで"],[23,"NEED HELP","助けが必要"],[24,"I SEE YOU","見えています"],[25,"HEARD","聞こえました"],
+ [26,"MANY PEOPLE","複数人いる"],[27,"CHILD","子供がいる"],[28,"ELDERLY","高齢者がいる"],[29,"PREGNANT","妊婦がいる"],
+ [30,"CAN'T BREATHE","息ができない"],[31,"PAIN","痛い"],[32,"THIRSTY","喉が渇いた"],[33,"THANK YOU","ありがとう"],
+ [34,"SORRY","ごめんなさい"],[35,"REPEAT","もう一度"],[36,"RESCUE TEAM","救助隊です"],[37,"EXIT","出口"]
+].map(([id,en,ja]) => ({id,en,ja}));
+const wordById = id => WORDS.find(w => w.id === id);
+
+/*CODEC*/
+
+/* ================= UI ================= */
+let kind = 'preset', selected = WORDS[0];
+const $ = id => document.getElementById(id);
+const wordsEl = $('words'), bitsEl = $('txbits'), freeTextEl = $('freeText');
+WORDS.forEach(w => {
+  const b = document.createElement('button');
+  b.className = 'word' + (w === selected ? ' sel' : '');
+  b.innerHTML = `${w.en}<small>${w.ja}</small>`;
+  b.onclick = () => { selected = w; [...wordsEl.children].forEach(c => c.classList.remove('sel')); b.classList.add('sel'); if (txTimer) startTx(); else renderBits(); };
+  wordsEl.appendChild(b);
+});
+function currentBits() {
+  if (kind === 'preset') return { bits: frameFor(selected.id), T: BIT_DURATION };
+  const t = freeTextEl.value.trim();
+  return { bits: t ? textFrameBits(t) : [], T: TEXT_BIT_DURATION };
+}
+function renderBits(cur = -1) {
+  const { bits } = currentBits();
+  bitsEl.innerHTML = '';
+  bits.forEach((v, i) => {
+    const d = document.createElement('div');
+    d.className = 'bit ' + (i < 4 ? 'pre' : 'dat') + (v ? ' on' : '') + (i === cur ? ' cur' : '');
+    bitsEl.appendChild(d);
+  });
+  if (kind === 'text') {
+    const t = freeTextEl.value.trim();
+    $('textInfo').textContent = t ? `実際に送る文字:「${symbolsToText(textToSymbols(t))}」／ 1周 約${Math.round(bits.length * TEXT_BIT_DURATION)}秒（カタカナはひらがなに変換）` : '文字を入力してください';
+  }
+}
+function setKind(k) {
+  kind = k; stopTx(false);
+  $('tabPreset').classList.toggle('on', k === 'preset'); $('tabText').classList.toggle('on', k === 'text');
+  $('presetBox').classList.toggle('hide', k !== 'preset'); $('textBox').classList.toggle('hide', k !== 'text');
+  renderBits();
+}
+$('tabPreset').onclick = () => setKind('preset'); $('tabText').onclick = () => setKind('text');
+freeTextEl.addEventListener('input', () => { baseText = freeTextEl.value; renderBits(); });
+freeTextEl.addEventListener('change', () => { if (txTimer) startTx(); });
+let baseText = freeTextEl.value;
+renderBits();
+
+/* ---- 送信: 画面全体を白黒点滅 ---- */
+const flash = $('flash'), txBtn = $('txBtn');
+let txTimer = null;
+function startTx() {
+  stopTx(true);
+  const { bits, T } = currentBits();
+  if (!bits.length) return;
+  flash.style.display = 'block';
+  const t0 = performance.now() + 300; let k = 0;
+  const tick = () => {
+    const i = k % bits.length;
+    flash.style.background = bits[i] ? '#fff' : '#000';
+    renderBits(i); k++;
+    txTimer = setTimeout(tick, Math.max(0, t0 + k * T * 1000 - performance.now()));
+  };
+  txTimer = setTimeout(tick, 300);
+  txBtn.textContent = '送信を停止'; txBtn.classList.add('stop');
+}
+function stopTx(silent) {
+  if (txTimer) clearTimeout(txTimer);
+  txTimer = null; flash.style.display = 'none'; flash.style.background = '#000';
+  if (!silent) { txBtn.textContent = '全画面点滅で送信開始'; txBtn.classList.remove('stop'); renderBits(); }
+}
+txBtn.onclick = () => txTimer ? stopTx(false) : startTx();
+flash.onclick = () => stopTx(false);
+window.addEventListener('keydown', e => { if (e.key === 'Escape') stopTx(false); });
+
+/* ---- 音声入力（Web Speech API）: 話した文を送信文字へ。5秒無音で元の文字へ戻す ---- */
+let rec = null, micOn = false, silenceTimer = null, debounce = null;
+const micBtn = $('micBtn');
+function setMicLabel() { micBtn.textContent = micOn ? '🎤 音声入力 ON（話してください）' : '🎤 音声入力 OFF（Chrome/Safariで利用可）'; micBtn.classList.toggle('on', micOn); }
+micBtn.onclick = () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert('このブラウザは音声認識に対応していません（Chrome推奨）'); return; }
+  if (micOn) { micOn = false; rec && rec.stop(); setMicLabel(); return; }
+  baseText = freeTextEl.value || 'HELP';
+  rec = new SR(); rec.continuous = true; rec.interimResults = true; rec.lang = 'ja-JP';
+  rec.onresult = e => {
+    const text = Array.from(e.results).map(r => r[0].transcript).join('').trim();
+    if (!text) return;
+    freeTextEl.value = text.slice(-16); renderBits();
+    clearTimeout(debounce); debounce = setTimeout(() => { if (!txTimer) startTx(); else startTx(); }, 1200);
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => { freeTextEl.value = baseText; renderBits(); if (txTimer) startTx(); }, 5000);
+  };
+  rec.onend = () => { if (micOn) { try { rec.start(); } catch (e) {} } };
+  micOn = true; setMicLabel(); rec.start();
+  if (!txTimer) startTx();
+};
+
+/* ---- 受信: Webカメラの中央最明部を測定 ---- */
+const cam = $('cam'), wave = $('wave'), wctx = wave.getContext('2d'), statusEl = $('status'), decodedEl = $('decoded'), rxBtn = $('rxBtn');
+const work = document.createElement('canvas'); work.width = 160; work.height = 120;
+const wk = work.getContext('2d', { willReadFrequently: true });
+let rxRunning = false, stream = null, samples = [], lastDecode = 0;
+async function startRx() {
+  try { stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, frameRate: 30 }, audio: false }); }
+  catch (e) { statusEl.textContent = 'カメラを開始できません: ' + e.message; return; }
+  cam.srcObject = stream; rxRunning = true; samples = [];
+  rxBtn.textContent = '受信を停止'; rxBtn.classList.add('stop');
+  statusEl.textContent = '受信待機中… iPhoneのライトを画面中央に入れてください';
+  loop();
+}
+function stopRx() { rxRunning = false; if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; rxBtn.textContent = 'Webカメラ受信を開始'; rxBtn.classList.remove('stop'); }
+rxBtn.onclick = () => rxRunning ? stopRx() : startRx();
+function measure() {
+  wk.drawImage(cam, 0, 0, work.width, work.height);
+  const d = wk.getImageData(work.width / 4, work.height / 4, work.width / 2, work.height / 2).data;
+  const hist = new Array(256).fill(0); let total = 0;
+  for (let i = 0; i < d.length; i += 4) { hist[Math.round(0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2])]++; total++; }
+  const top = Math.max(1, Math.floor(total * 0.03)); let remaining = top, sum = 0;
+  for (let lv = 255; lv >= 0 && remaining > 0; lv--) { const take = Math.min(hist[lv], remaining); sum += take * lv; remaining -= take; }
+  return sum / top / 255;
+}
+function loop() {
+  if (!rxRunning) return;
+  if (cam.readyState >= 2) {
+    const t = performance.now() / 1000;
+    samples.push({ t, v: measure() });
+    while (samples.length && t - samples[0].t > 60) samples.shift();
+    if (t - lastDecode >= 1.0) { lastDecode = t; update(); }
+    drawWave();
+  }
+  if (cam.requestVideoFrameCallback) cam.requestVideoFrameCallback(loop); else requestAnimationFrame(loop);
+}
+function drawWave() {
+  const W = wave.width, H = wave.height; wctx.fillStyle = '#000'; wctx.fillRect(0, 0, W, H);
+  const view = samples.slice(-150); const st = samples.length > 10 ? stats(samples) : { thr: 0.5 };
+  wctx.strokeStyle = 'rgba(255,214,10,.8)'; wctx.setLineDash([4,3]); wctx.beginPath(); wctx.moveTo(0, H - st.thr * H); wctx.lineTo(W, H - st.thr * H); wctx.stroke(); wctx.setLineDash([]);
+  wctx.strokeStyle = '#38d9ff'; wctx.lineWidth = 1.6; wctx.beginPath();
+  view.forEach((s, i) => { const x = W * i / Math.max(view.length - 1, 1), y = H - Math.min(Math.max(s.v,0),1) * H; i ? wctx.lineTo(x, y) : wctx.moveTo(x, y); });
+  wctx.stroke();
+}
+function update() {
+  const st = samples.length > 10 ? stats(samples) : { contrast: 0 };
+  const span = samples.length ? samples[samples.length-1].t - samples[0].t : 0;
+  const tr = decodeTextMsg(samples);
+  const wr = tr ? null : decodeWord(samples, wordById);
+  if (tr) {
+    decodedEl.innerHTML = `<div class="big">${tr.text.replace(/</g,'&lt;')}</div><div class="id">自由文字（${tr.repeats}周${tr.corrected ? '・誤り訂正あり' : ''}）</div>`;
+    statusEl.textContent = `文字を受信 コントラスト ${st.contrast.toFixed(2)}`;
+  } else if (wr) {
+    decodedEl.innerHTML = `<div class="big">${wr.word.ja}</div><div class="id">[${wr.word.en}]  ID ${wr.word.id}</div>`;
+    statusEl.textContent = `受信成功（連送${wr.repeats}回の多数決${wr.corrected ? '・誤り訂正あり' : ''}）コントラスト ${st.contrast.toFixed(2)}`;
+  } else if (st.contrast < 0.10) statusEl.textContent = '点滅を検出できません。iPhoneのライトを画面中央に向けてください';
+  else if (span < 12.5) statusEl.textContent = '受信中… データを集めています（文字は約12秒〜）';
+  else statusEl.textContent = '同期中… 光の点滅を解析しています';
+}
+</script>
+</body>
+</html>

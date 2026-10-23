@@ -296,9 +296,39 @@ public struct SamplingView: View {
                 .foregroundColor(.white)
                 .cornerRadius(12)
             }
+            
+            resetCalibrationButton
         }
         .padding()
         .background(RoundedRectangle(cornerRadius: 16).fill(Color(white: 0.08)))
+    }
+    
+    @ViewBuilder
+    private var resetCalibrationButton: some View {
+        if detector.isUserCalibrated {
+            Button(action: {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                detector.resetCalibration()
+                showCalibrationNotice("↩︎ キャリブレーションをデフォルトに戻しました")
+            }) {
+                HStack {
+                    Image(systemName: "arrow.counterclockwise")
+                    Text("キャリブレーションをデフォルトに戻す")
+                }
+                .font(.subheadline.bold())
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 11)
+                .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.22)))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.orange.opacity(0.7), lineWidth: 1))
+                .foregroundColor(.orange)
+            }
+        }
+        if let notice = calibrationAppliedNotice, !detector.isUserCalibrated {
+            Text(notice)
+                .font(.caption.bold())
+                .foregroundColor(.orange)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
     }
     
     @ViewBuilder

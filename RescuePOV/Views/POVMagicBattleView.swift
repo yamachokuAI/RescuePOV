@@ -74,12 +74,14 @@ public struct POVMagicBattleView: View {
             // UI Overlay (ゲーム進行)
             VStack {
                 HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 30))
-                            .foregroundColor(.white.opacity(0.5))
+                    if gameState == .ready || gameState == .counting || (gameState == .casting && myElement == nil) {
+                        Button(action: { dismiss() }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 30))
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        .padding()
                     }
-                    .padding()
                     Spacer()
                 }
                 Spacer()

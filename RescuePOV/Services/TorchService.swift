@@ -81,6 +81,11 @@ public final class TorchService: ObservableObject {
         setTorch(on: false)
     }
     
+    /// 光通信用: 他の状態を変えずにトーチを直接ON/OFF
+    public func setTorchDirect(on: Bool) {
+        setTorch(on: on)
+    }
+    
     private func setTorch(on: Bool) {
         guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else {
             DispatchQueue.main.async { self.isTorchOn = on }

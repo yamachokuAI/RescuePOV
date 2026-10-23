@@ -55,6 +55,9 @@ public struct MainDashboardView: View {
     @State private var isShowingTraining: Bool = false
     @State private var isShowingMagicBattle: Bool = false
     @State private var isShowingSurvivalBeacon: Bool = false
+    @State private var isShowingLightComm: Bool = false
+    @State private var isShowingPhotoPicker: Bool = false
+    @FocusState private var isTextFieldFocused: Bool
     
     @ObservedObject private var motionDetector = MotionDetector.shared
     @ObservedObject private var voiceService = VoiceRescueService.shared
@@ -88,6 +91,7 @@ public struct MainDashboardView: View {
             .onChange(of: selectedPhotoItem) { _, newItem in
                 handlePhotoSelection(newItem)
             }
+            .photosPicker(isPresented: $isShowingPhotoPicker, selection: $selectedPhotoItem, matching: .images)
             .onAppear {
                 loadSavedWallpaper()
                 motionDetector.start(direction: selectedDirection)
@@ -119,6 +123,13 @@ public struct MainDashboardView: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         trailingToolbarButtons
+                    }
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button(L.t("完了")) {
+                            isTextFieldFocused = false
+                        }
+                        .fontWeight(.bold)
                     }
                 }
         }
@@ -153,6 +164,9 @@ public struct MainDashboardView: View {
         .fullScreenCover(isPresented: $isShowingMagicBattle) {
             POVMagicBattleView()
         }
+        .fullScreenCover(isPresented: $isShowingLightComm) {
+            LightCommView()
+        }
     }
     
     @ViewBuilder
@@ -186,6 +200,7 @@ public struct MainDashboardView: View {
                 .padding(.top, 6)
                 .padding(.bottom, 24)
             }
+            .scrollDismissesKeyboard(.interactively)
         }
     }
     
@@ -206,15 +221,17 @@ public struct MainDashboardView: View {
     private var trailingToolbarButtons: some View {
         HStack(spacing: 8) {
             Menu {
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                    Label("写真フォルダから壁紙を選択", systemImage: "photo.on.rectangle")
+                Button(action: {
+                    isShowingPhotoPicker = true
+                }) {
+                    Label(L.t("写真フォルダから壁紙を選択"), systemImage: "photo.on.rectangle")
                 }
                 Button(action: {
                     customWallpaperImage = nil
                     saveCustomWallpaper(nil)
                     wallpaperPresetIndex = (wallpaperPresetIndex + 1) % 3
                 }) {
-                    Label("内蔵グラデーション壁紙を切替", systemImage: "sparkles.rectangle.stack")
+                    Label(L.t("内蔵グラデーション壁紙を切替"), systemImage: "sparkles.rectangle.stack")
                 }
             } label: {
                 Image(systemName: "photo.circle.fill")
@@ -226,7 +243,7 @@ public struct MainDashboardView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 appLanguage = (appLanguage == "en") ? "auto" : "en"
             }) {
-                Text(appLanguage == "en" ? "EN" : "JP")
+                Text(L.currentLabel)
                     .font(.system(size: 11, weight: .heavy, design: .monospaced))
                     .foregroundColor(.white)
                     .padding(.horizontal, 7)
@@ -241,7 +258,7 @@ public struct MainDashboardView: View {
             }) {
                 HStack(spacing: 3) {
                     Image(systemName: "waveform.path.ecg")
-                    Text("練習")
+                    Text(L.t("練習"))
                 }
                 .font(.system(size: 11, weight: .bold))
                 .foregroundColor(.cyan)
@@ -427,6 +444,7 @@ public struct MainDashboardView: View {
                 } else {
                     targetText = "HELP"
                     selectedColor = .white
+                    voiceService.isVoiceSyncEnabled = true
                 }
             }
         }) {
@@ -486,7 +504,7 @@ public struct MainDashboardView: View {
             .frame(height: 68)
             
             HStack {
-                Label("120Hz OLED 黒締め", systemImage: "sparkles")
+                Label(L.t("120Hz OLED 黒締め"), systemImage: "sparkles")
                     .font(.system(size: 9.5, weight: .bold))
                     .foregroundColor(.white.opacity(0.8))
                 Spacer()
@@ -563,7 +581,7 @@ public struct MainDashboardView: View {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 13, weight: .bold))
                     .foregroundColor(.cyan)
-                Text("スイング振幅")
+                Text(L.t("スイング振幅"))
                     .font(.system(size: 12, weight: .heavy))
                     .foregroundColor(.white)
                 Spacer()
@@ -633,12 +651,12 @@ public struct MainDashboardView: View {
                     Spacer()
                 }
                 Spacer(minLength: 2)
-                Text("炎・水・雷・草\n空間属性バトル")
+                Text(L.t("炎・水・雷・草\n空間属性バトル"))
                     .font(.system(size: 12, weight: .heavy))
                     .foregroundColor(.white)
                     .lineSpacing(2)
                 HStack {
-                    Text("対戦開始")
+                    Text(L.t("対戦開始"))
                         .font(.system(size: 10.5, weight: .black))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
@@ -668,18 +686,18 @@ public struct MainDashboardView: View {
                     Image(systemName: "moon.stars.fill")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(.yellow)
-                    Text("省電力ビーコン")
+                    Text(L.t("省電力ビーコン"))
                         .font(.system(size: 11.5, weight: .black))
                         .foregroundColor(.white)
                     Spacer()
                 }
                 Spacer(minLength: 2)
-                Text("画面消灯＋間欠\n閃光＆電子笛")
+                Text(L.t("画面消灯＋間欠\n閃光＆電子笛"))
                     .font(.system(size: 11.5, weight: .bold))
                     .foregroundColor(.white.opacity(0.9))
                     .lineSpacing(2)
                 HStack {
-                    Text("手動起動")
+                    Text(L.t("手動起動"))
                         .font(.system(size: 10.5, weight: .black))
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
@@ -744,7 +762,10 @@ public struct MainDashboardView: View {
     
     @ViewBuilder
     private var wordInputTextField: some View {
-        TextField("表示文字を入力", text: $targetText)
+        TextField(L.t("表示文字を入力"), text: $targetText)
+            .focused($isTextFieldFocused)
+            .submitLabel(.done)
+            .onSubmit { isTextFieldFocused = false }
             .font(.system(size: 16, weight: .black, design: .monospaced))
             .foregroundColor(.white)
             .onTapGesture {
@@ -825,7 +846,7 @@ public struct MainDashboardView: View {
     private var bentoQuickSignalCompartment: some View {
         HStack(spacing: 8) {
             quickGlassActionButton(
-                title: torchService.isTorchOn ? "ライトON" : "背面ライト",
+                title: L.t(torchService.isTorchOn ? "ライトON" : "背面ライト"),
                 icon: torchService.isTorchOn ? "flashlight.on.fill" : "flashlight.off.fill",
                 tint: .orange,
                 isActive: torchService.isTorchOn
@@ -835,7 +856,7 @@ public struct MainDashboardView: View {
             }
             
             quickGlassActionButton(
-                title: torchService.isSOSActive ? "SOS発信中" : "SOS点滅",
+                title: L.t(torchService.isSOSActive ? "SOS発信中" : "SOS点滅"),
                 icon: "bolt.badge.automatic.fill",
                 tint: .red,
                 isActive: torchService.isSOSActive
@@ -845,7 +866,7 @@ public struct MainDashboardView: View {
             }
             
             quickGlassActionButton(
-                title: audioService.isPlaying ? "吹鳴中" : "ホイッスル",
+                title: L.t(audioService.isPlaying ? "吹鳴中" : "ホイッスル"),
                 icon: audioService.isPlaying ? "speaker.wave.3.fill" : "speaker.wave.2.fill",
                 tint: .yellow,
                 isActive: audioService.isPlaying
@@ -855,13 +876,13 @@ public struct MainDashboardView: View {
             }
             
             quickGlassActionButton(
-                title: "バトル",
-                icon: "sparkles",
+                title: L.t("光通信"),
+                icon: "dot.radiowaves.left.and.right",
                 tint: .cyan,
                 isActive: false
             ) {
                 selectCompartment(.emergencySignal)
-                isShowingMagicBattle = true
+                isShowingLightComm = true
             }
         }
         .padding(10)
@@ -908,7 +929,7 @@ public struct MainDashboardView: View {
             
             Spacer()
             
-            Button("適用") {
+            Button(L.t("適用")) {
                 UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                 aiEngine.acceptSuggestion { text, mode in
                     withAnimation {
@@ -946,7 +967,7 @@ public struct MainDashboardView: View {
             HStack(spacing: 10) {
                 Image(systemName: "play.circle.fill")
                     .font(.system(size: 26, weight: .bold))
-                Text((operationalMode == .rescue) ? "救難POV空間照射を開始" : "パーティーPOV空間照射を開始")
+                Text(L.t((operationalMode == .rescue) ? "救難POV空間照射を開始" : "パーティーPOV空間照射を開始"))
                     .font(.system(size: 18, weight: .black, design: .rounded))
             }
             .frame(maxWidth: .infinity)
@@ -1008,7 +1029,7 @@ public struct MainDashboardView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("完了") { isShowingSettings = false }
+                    Button(L.t("完了")) { isShowingSettings = false }
                 }
             }
         }
@@ -1017,7 +1038,7 @@ public struct MainDashboardView: View {
     
     @ViewBuilder
     private var opticsSettingsSection: some View {
-        Section(header: Text("オプティクス設定")) {
+        Section(header: Text(L.t("オプティクス設定"))) {
             Picker("振る方向", selection: $selectedDirection) {
                 ForEach(POVDirection.allCases) { dir in
                     Label(dir.rawValue, systemImage: dir.iconName).tag(dir)
@@ -1030,27 +1051,27 @@ public struct MainDashboardView: View {
                 }
             }
             
-            Toggle("観察者向け正像表示", isOn: $mirrorForViewer)
+            Toggle(L.t("観察者向け正像表示"), isOn: $mirrorForViewer)
         }
     }
     
     @ViewBuilder
     private var voiceSyncSettingsSection: some View {
-        Section(header: Text("叫び声AI音声同期")) {
-            Toggle("叫び声をマイクで拾って文字に反映", isOn: $voiceService.isVoiceSyncEnabled)
+        Section(header: Text(L.t("叫び声AI音声同期"))) {
+            Toggle(L.t("叫び声をマイクで拾って文字に反映"), isOn: $voiceService.isVoiceSyncEnabled)
             if voiceService.isVoiceSyncEnabled {
-                Toggle("声が止んだら元の文字に復帰", isOn: $voiceService.autoResetToDefault)
+                Toggle(L.t("声が止んだら元の文字に復帰"), isOn: $voiceService.autoResetToDefault)
             }
         }
     }
     
     @ViewBuilder
     private var emergencyEmailSettingsSection: some View {
-        Section(header: Text("緊急救難SOSメール自動配信（Google連携）")) {
+        Section(header: Text(L.t("緊急救難SOSメール自動配信（Google連携）"))) {
             HStack {
                 Image(systemName: "person.crop.circle.fill")
                     .foregroundColor(.green)
-                Text("送信元Google")
+                Text(L.t("送信元Google"))
                 Spacer()
                 Text(cloudService.senderGmail)
                     .font(.system(size: 11, design: .monospaced))
@@ -1060,16 +1081,16 @@ public struct MainDashboardView: View {
             HStack {
                 Image(systemName: "envelope.badge.shield.half.filled.fill")
                     .foregroundColor(.red)
-                Text("通知先（ご家族等）")
+                Text(L.t("通知先（ご家族等）"))
                 Spacer()
-                TextField("例: family@example.com", text: $cloudService.emergencyRecipientEmail)
+                TextField(L.t("例: family@example.com"), text: $cloudService.emergencyRecipientEmail)
                     .multilineTextAlignment(.trailing)
                     .foregroundColor(.cyan)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
             }
             
-            Text("※SOS発動時、通知先（ご家族宛て）に【暗号化されたリアルタイムGPS地図リンク】と【ワンタイム合鍵】が自動送信されます。送信元（ご本人Gmail）にも控えが自動送信されます。")
+            Text(L.t("※SOS発動時、通知先（ご家族宛て）に【暗号化されたリアルタイムGPS地図リンク】と【ワンタイム合鍵】が自動送信されます。送信元（ご本人Gmail）にも控えが自動送信されます。"))
                 .font(.caption2)
                 .foregroundColor(.gray)
         }
@@ -1077,10 +1098,10 @@ public struct MainDashboardView: View {
     
     @ViewBuilder
     private var aiSituationSettingsSection: some View {
-        Section(header: Text("Apple Intelligence & 状況判断")) {
-            Toggle("シチュエーション自動適応", isOn: $aiEngine.isAutoSituationAdaptationEnabled)
+        Section(header: Text(L.t("Apple Intelligence & 状況判断"))) {
+            Toggle(L.t("シチュエーション自動適応"), isOn: $aiEngine.isAutoSituationAdaptationEnabled)
             HStack {
-                Text("現在の推定状況")
+                Text(L.t("現在の推定状況"))
                 Spacer()
                 Text(aiEngine.currentSituation.rawValue)
                     .foregroundColor(.gray)
@@ -1094,10 +1115,14 @@ public struct MainDashboardView: View {
         Task {
             if let data = try? await newItem.loadTransferable(type: Data.self),
                let uiImg = UIImage(data: data) {
+                let jpeg = uiImg.jpegData(compressionQuality: 0.88) ?? data
                 await MainActor.run {
                     self.customWallpaperImage = uiImg
-                    saveCustomWallpaper(data)
+                    saveCustomWallpaper(jpeg)
                 }
+            }
+            await MainActor.run {
+                self.selectedPhotoItem = nil
             }
         }
     }
@@ -1157,23 +1182,23 @@ public struct BlackoutSurvivalBeaconView: View {
                         Text("\(countdown)")
                             .font(.system(size: 54, weight: .black, design: .monospaced))
                             .foregroundColor(isFlashingNow ? .white : .yellow.opacity(0.75))
-                        Text("秒後に自動閃光")
+                        Text(L.t("秒後に自動閃光"))
                             .font(.system(size: 11, weight: .bold))
                             .foregroundColor(.gray)
                     }
                 }
                 
-                Text("有機EL完全消灯によりバッテリーを極限まで温存しながら\n8秒おきに【背面フラッシュ閃光＋3kHz救助笛】を発信します")
+                Text(L.t("有機EL完全消灯によりバッテリーを極限まで温存しながら\n8秒おきに【背面フラッシュ閃光＋3kHz救助笛】を発信します"))
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.45))
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
                 
                 HStack(spacing: 16) {
-                    Toggle("背面LED閃光", isOn: $useTorch)
+                    Toggle(L.t("背面LED閃光"), isOn: $useTorch)
                         .toggleStyle(.button)
                         .tint(.orange)
-                    Toggle("3kHz電子笛", isOn: $useWhistle)
+                    Toggle(L.t("3kHz電子笛"), isOn: $useWhistle)
                         .toggleStyle(.button)
                         .tint(.yellow)
                 }
@@ -1187,7 +1212,7 @@ public struct BlackoutSurvivalBeaconView: View {
                 }) {
                     HStack {
                         Image(systemName: "xmark.circle.fill")
-                        Text("サバイバル・ビーコンを終了して戻る")
+                        Text(L.t("サバイバル・ビーコンを終了して戻る"))
                     }
                     .font(.system(size: 14, weight: .bold))
                     .foregroundColor(.white.opacity(0.85))

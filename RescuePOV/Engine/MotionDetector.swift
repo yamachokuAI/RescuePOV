@@ -155,6 +155,17 @@ public final class MotionDetector: ObservableObject {
         }
     }
     
+    /// キャリブレーションをデフォルト（非対称比1.0・振れ幅約95度）に戻す
+    public func resetCalibration() {
+        UserDefaults.standard.removeObject(forKey: "user_asymmetry_ratio")
+        UserDefaults.standard.removeObject(forKey: "user_stroke_width_rad")
+        UserDefaults.standard.removeObject(forKey: "is_user_calibrated")
+        self.userAsymmetryRatio = 1.0
+        self.learnedStrokeWidth = 1.65
+        self.strokeAngleRange = 1.65 * (180.0 / .pi)
+        self.isUserCalibrated = false
+    }
+    
     /// モーション検知を開始（100Hz高精度位置トラッキング）
     public func start(direction: POVDirection) {
         stop()
