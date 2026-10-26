@@ -171,6 +171,18 @@ public final class VoiceRescueService: ObservableObject {
             try audioSession.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker, .allowBluetooth])
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
             
+            // 古いフォーマットキャッシュによる "format mismatch" クラッシュを防ぐため、毎回新しいAVAudioEngineを生成
+            let newEngine = AVAudioEngine()
+            self.audioEngine = newEngine
+            let inputNode = newEngine.inputNode
+            
+            // ハードウェア入力が有効かチェック（0Hzや0chの異常時はクラッシュさせず安全にスキップ）
+            let hwFormat = inputNode.inputFormat(forBus: 0)
+            guard hwFormat.sampleRate > 0, hwFormat.channelCount > 0 else {
+                statusMessage = "マイク入力フォーマット待機中..."
+                return
+            }
+            
             channels = makeChannels()
             for channel in channels {
                 let request = SFSpeechAudioBufferRecognitionRequest()
@@ -199,7 +211,7 @@ public final class VoiceRescueService: ObservableObject {
                         // 文末・タイムアウト時は新しいセッションで連続リスニングを維持
                         DispatchQueue.main.async {
                             guard token == self.sessionToken, self.isListening, self.isVoiceSyncEnabled else { return }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                                 guard token == self.sessionToken, self.isListening else { return }
                                 self.restartSessionKeepingTimers()
                             }
@@ -208,10 +220,9 @@ public final class VoiceRescueService: ObservableObject {
                 }
             }
             
-            let inputNode = audioEngine.inputNode
-            let recordingFormat = inputNode.outputFormat(forBus: 0)
             inputNode.removeTap(onBus: 0)
-            inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] (buffer: AVAudioPCMBuffer, when: AVAudioTime) in
+            // format に nil を渡すことで、48000Hz / 44100Hz など現在のハードウェアのネイティブフォーマットに自動一致させ、クラッシュを完全防止
+            inputNode.installTap(onBus: 0, bufferSize: 1024, format: nil) { [weak self] (buffer: AVAudioPCMBuffer, when: AVAudioTime) in
                 guard let self = self else { return }
                 for channel in self.channels {
                     channel.request?.append(buffer)
@@ -219,8 +230,8 @@ public final class VoiceRescueService: ObservableObject {
                 self.analyzeAudioLevel(buffer: buffer)
             }
             
-            audioEngine.prepare()
-            try audioEngine.start()
+            newEngine.prepare()
+            try newEngine.start()
             
             isListening = true
             statusMessage = "叫び声・音声を待機中..."
@@ -236,6 +247,7 @@ public final class VoiceRescueService: ObservableObject {
             audioEngine.stop()
         }
         audioEngine.inputNode.removeTap(onBus: 0)
+        audioEngine.reset()
         for channel in channels {
             channel.request?.endAudio()
             channel.request = nil

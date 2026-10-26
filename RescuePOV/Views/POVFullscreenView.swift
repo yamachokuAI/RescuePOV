@@ -515,15 +515,16 @@ public struct POVFullscreenView: View {
     
     private func rebuildSlices() {
         self.motionDetector.staticTextLength = max(1, currentText.count)
-        let isCondensed = (motionDetector.activeRangeMode == .compactSnap)
+        // AI自動モードで勝手に文字が細く（暗く）なるのを防ぎ、明示的に手首モードを選んだ時のみ凝縮する
+        let isCondensed = (motionDetector.selectedRangeMode == .compactSnap)
         self.slices = BitmapGenerator.shared.generateSlices(
             text: currentText,
             direction: direction,
-            targetSlices: isCondensed ? 20 : 32, // 空間凝縮
+            targetSlices: isCondensed ? 20 : 32,
             sliceResolution: 28,
             mirrorForViewer: mirrorForViewer,
             isCondensed: isCondensed,
-            edgeMargin: 0 // 頂点の真っ暗ゾーンを完全撤廃
+            edgeMargin: 0
         )
     }
     

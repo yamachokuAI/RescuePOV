@@ -15,7 +15,9 @@ public enum POVColor: String, CaseIterable, Identifiable {
     
     public var uiColor: UIColor {
         switch self {
-        case .white: return UIColor(white: 1.0, alpha: 1.0)
+        case .white:
+            // True Tone / Night Shift下でも青・緑・赤のすべてのサブピクセルを100%最大駆動させるDisplayP3純白
+            return UIColor(displayP3Red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
         case .red: return UIColor(red: 1.0, green: 0.05, blue: 0.05, alpha: 1.0)
         case .yellow: return UIColor(red: 1.0, green: 1.0, blue: 0.0, alpha: 1.0)
         case .cyan: return UIColor(red: 0.0, green: 1.0, blue: 1.0, alpha: 1.0)
@@ -234,13 +236,14 @@ public final class POVCanvasView: UIView {
         
         let isUpsideDown = detector.isUpsideDown
         
-        // 【手首30cm浮き出しモード時のスリット幅最適化】
-        // 手首の狭いスナップ（振れ幅約25〜35cm）では、スリットを14pxに絞ることで空間にクッキリ浮き出る
+        // 【光量激減・色ボケ防止】
+        // 4.0pxに縮小すると有機ELのサブピクセル応答遅延で色割れ＆光量不足になるため、
+        // 通常・AI自動時は常に90.0pxフル幅（手動で30cmモードを選んだ時のみ32px）で100%純白発光させる
         let effectiveSlitWidth: CGFloat
-        if detector.activeRangeMode == .compactSnap {
-            effectiveSlitWidth = 4.0 // 手首モード時はスリット幅を極細の4pxに強制固定（判別不能になるのを防ぐ）
+        if detector.selectedRangeMode == .compactSnap {
+            effectiveSlitWidth = 32.0
         } else {
-            effectiveSlitWidth = slitWidth
+            effectiveSlitWidth = slitWidth // 90.0px
         }
         
         // 【電源ボタン誤押し回避: 上下逆さま持ち自動対応（安全設計）】

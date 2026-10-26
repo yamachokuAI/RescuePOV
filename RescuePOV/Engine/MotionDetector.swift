@@ -123,6 +123,10 @@ public final class MotionDetector: ObservableObject {
     // 新規追加: 円形（風車）モードのトラッキング用
     public var isWindmillMode: Bool = false
     private var continuousRotationTheta: Double = 0.0
+    
+    // 背面ライト・先行メトロノーム用（人間の反応時間100msを見越して折り返し前に合図）
+    @Published public var isMetronomeTorchEnabled: Bool = true
+    private var hasFiredMetronomeForCurrentHalf: Bool = false
     private init() {
         loadCalibration()
         startStaticStrobeTimer()
@@ -201,152 +205,31 @@ public final class MotionDetector: ObservableObject {
         swingIntensity = 0.0
     }
     
-    /// 100Hzで角速度から端末の物理空間位置（X座標・角度）を直接算出
+    /// 純粋な時間メトロノーム（2倍速）で表示シーケンスを回し、人間が背面ライトの点滅リズムに動きを合わせる方式
     private func processDeviceMotion(_ motion: CMDeviceMotion, direction: POVDirection) {
         let now = Date()
         let dt = min(now.timeIntervalSince(lastUpdateTime), 0.05)
         lastUpdateTime = now
         
-        // 横振りの場合: Z軸角速度 (rad/s) が腕の振り角度とダイレクトに比例
-        // 縦振りの場合: X軸角速度
-        let rawGyro: Double
-        switch direction {
-        case .horizontal:
-            // ジャイロ（回転）の抽出
-            let gx = motion.gravity.x
-            let gy = motion.gravity.y
-            let gz = motion.gravity.z
-            let rx = motion.rotationRate.x
-            let ry = motion.rotationRate.y
-            let rz = motion.rotationRate.z
-            let rotationGyro = -(rx * gx + ry * gy + rz * gz)
-            
-            // 加速度（平行移動）の抽出
-            // スマホの姿勢に依存せず、常に重力に直交する「左右」の加速度を計算
-            let rightAccel = motion.userAcceleration.x * (-gy) + motion.userAcceleration.y * gx
-            self.lateralVelocity += rightAccel * dt
-            self.lateralVelocity *= 0.85 // ドリフトを防ぐリーキー積分器
-            
-            // センサーフュージョン（回転 + 平行移動）
-            // これにより、手首を固定して肩幅でスライドさせただけでも正確にスイングを検知可能！
-            rawGyro = rotationGyro + (self.lateralVelocity * 3.0)
-            
-        case .vertical:
-            // 縦振り時も「X軸/Y軸回転 + 上下平行移動（加速度）」のセンサーフュージョンを適用
-            let verticalAccel = motion.userAcceleration.y + motion.userAcceleration.z
-            self.lateralVelocity += verticalAccel * dt
-            self.lateralVelocity *= 0.85
-            let dominantRotation = abs(motion.rotationRate.x) >= abs(motion.rotationRate.y)
-            ? motion.rotationRate.x
-            : motion.rotationRate.y
-            rawGyro = dominantRotation + (self.lateralVelocity * 3.0)
-        }
-        
-        let gyro = invertSwingDirection ? -rawGyro : rawGyro
-        self.currentGyroZ = gyro
-        self.swingIntensity = abs(gyro)
-        
-        // 1. 水平検知＆上下逆さま検知（電源ボタン誤押し回避）
+        // 端末の姿勢（メニュー表示用の水平判定・上下逆さま判定のみに使用し、発光タイミングは一切ズラさない）
         let gravity = motion.gravity
+        let rx = motion.rotationRate.x
+        let ry = motion.rotationRate.y
+        let rz = motion.rotationRate.z
+        let gyroMag = sqrt(rx * rx + ry * ry + rz * rz)
+        self.swingIntensity = gyroMag
+        self.currentGyroZ = rz
+        
         let isFlat = (gravity.z < -0.70) && (abs(gravity.x) < 0.40) && (abs(gravity.y) < 0.45)
-        let isQuiet = self.swingIntensity < 0.45 // 静止または微動
-        
-        // 疲労・振れ幅に応じたAI自動レンジモード切り替え
-        if isQuiet {
-            quietTimeCounter += dt
-            if quietTimeCounter >= 1.0 { // 1秒以上静止＝疲労または狭所
-                if selectedRangeMode == .auto {
-                    if activeRangeMode != .zeroStatic {
-                        activeRangeMode = .zeroStatic
-                    }
-                }
-            }
-        } else {
-            quietTimeCounter = 0.0
-            if selectedRangeMode == .auto {
-                // スイング振幅と角速度から30cm手首スナップ vs ワイドを瞬時判定
-                if learnedStrokeWidth < 0.70 { // 約40度未満＝手首30cm浮き出しスナップ
-                    if activeRangeMode != .compactSnap {
-                        activeRangeMode = .compactSnap
-                    }
-                } else {
-                    if activeRangeMode != .wide {
-                        activeRangeMode = .wide
-                    }
-                }
-            }
-        }
-        
-        // 手動選択されている場合はそのモードを強制適用
-        if selectedRangeMode != .auto && activeRangeMode != selectedRangeMode {
-            activeRangeMode = selectedRangeMode
-            if selectedRangeMode == .fullCircle {
-                self.isWindmillMode = true
-            } else if selectedRangeMode == .semiCircle {
-                self.isWindmillMode = false
-                self.learnedStrokeWidth = 1.0 // 広めに固定
-            } else {
-                self.isWindmillMode = false
-            }
-            
-            // 30cm手首モードに切り替わった時は、手首の振れ幅（約18度=0.32rad）に即座にプリセット
-            if activeRangeMode == .compactSnap && (learnedStrokeWidth > 0.60 || learnedStrokeWidth < 0.18) {
-                learnedStrokeWidth = 0.32
-                strokeAngleRange = 18.3
-            }
-        }
+        let isQuiet = gyroMag < 0.35
         
         if isQuiet {
-            // 静止時にのみ上下逆さま判定を更新（激しく振っている最中の遠心力による画面反転バグを根絶）
             self.isUpsideDown = gravity.y > 0.40
-        }
-        
-        // 頭上スイング＆円形（風車）モード自動検知
-        let isOverhead = !isFlat && (abs(gravity.y) > 0.30 || abs(gravity.z) < 0.70)
-        let isFastSwing = self.swingIntensity > 0.8
-        
-        if isOverhead {
-            // 風車モード（円形スイング）の検知: 同一方向に継続して360度以上回転しているか
-            if gyro > 2.0 { // 右回転
-                continuousRotationTheta += gyro * dt
-                if continuousRotationTheta > 2 * .pi {
-                    self.isWindmillMode = true
-                }
-            } else if gyro < -2.0 { // 左回転
-                continuousRotationTheta += gyro * dt
-                if continuousRotationTheta < -2 * .pi {
-                    self.isWindmillMode = true
-                }
-            } else {
-                // 回転が止まるか逆転したらリセット
-                if abs(gyro) < 0.5 {
-                    continuousRotationTheta = 0.0
-                    self.isWindmillMode = false
-                }
-            }
-            
-            if isFastSwing {
-                swingTriggerCounter += 1
-                if swingTriggerCounter >= 4 { // 約0.04秒で即座に反応
-                    if !self.isOverheadSwinging {
-                        self.isOverheadSwinging = true
-                    }
-                    self.isRealtimeOverheadSync = true
-                }
-            }
-        } else if isFlat && isQuiet {
-            swingTriggerCounter = 0
-            continuousRotationTheta = 0.0
-            self.isWindmillMode = false
-            if self.isOverheadSwinging {
-                self.isOverheadSwinging = false
-            }
-            self.isRealtimeOverheadSync = false
         }
         
         if isFlat && isQuiet {
             horizontalStabilizeCounter += 1
-            if horizontalStabilizeCounter >= 10 { // 100Hzで約0.1秒維持で確定
+            if horizontalStabilizeCounter >= 10 {
                 if !self.isDeviceHorizontal {
                     self.isDeviceHorizontal = true
                 }
@@ -358,134 +241,62 @@ public final class MotionDetector: ObservableObject {
             }
         }
         
-        // 2. 角度（空間位置）の台形積分: theta += gyro * dt
-        currentTheta += (gyro + lastGyroZ) * 0.5 * dt
-        self.currentAngleDegrees = currentTheta * (180.0 / .pi)
-        
-        // 3. 折り返し（ゼロクロス）の検出（超高速レスポンス版）
-        // 手首30cmモード時は、手首の素早い「返し」（4〜8Hz、往復0.12〜0.2秒）に遅延ゼロで瞬時追従するため
-        // 不感帯ヒステリシスを極小の0.08rad/sに設定し、ゼロクロス直後に即座に折り返しを確定
-        let isCompact = (activeRangeMode == .compactSnap)
-        let turnHysteresis = isCompact ? 0.08 : 0.06
-        
-        if currentPhase == .backward && gyro > turnHysteresis && lastGyroZ <= turnHysteresis {
-            // 左端到達 → 正方向（往路）への瞬時反転
-            handleTurnaround(isMovingPositive: true, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
-        } else if currentPhase == .forward && gyro < -turnHysteresis && lastGyroZ >= -turnHysteresis {
-            // 右端到達 → 負方向（復路）への瞬時反転
-            handleTurnaround(isMovingPositive: false, turnaroundTheta: currentTheta, currentGyro: gyro, now: now)
+        // モード選択の反映（勝手にスリット幅が変わらないよう .auto 時は常に .wide 固定）
+        if selectedRangeMode == .auto {
+            if activeRangeMode != .wide {
+                activeRangeMode = .wide
+            }
+        } else if activeRangeMode != selectedRangeMode {
+            activeRangeMode = selectedRangeMode
         }
         
-        // 4. 【描画マッピング: 円形モード or PLL仮想振り子】
-        let isRecentlySwinging = now.timeIntervalSince(lastTurnTime) < max(self.roundTripDuration * 1.5, 0.45)
-        
-        if self.isWindmillMode {
-            // 円形（風車）モード：ジャイロの絶対角度（360度ループ）で文字を空間に全方位固定する
-            // 360度 (2π) を1周期として、0.0〜1.0 にシームレスにマッピング
+        if activeRangeMode == .zeroStatic {
             self.isEmitting = true
-            self.currentPhase = gyro > 0 ? .forward : .backward
-            
-            // continuousRotationThetaは無限に増減するので、2πで割った余りを使う
-            var wrappedTheta = continuousRotationTheta.truncatingRemainder(dividingBy: 2 * .pi)
-            if wrappedTheta < 0 { wrappedTheta += 2 * .pi } // 0〜2πに正規化
-            
-            self.strokeProgress = wrappedTheta / (2 * .pi)
-            
-        } else {
-            // 従来のPLL仮想振り子による究極の描画安定化
-            if gyro > turnHysteresis {
-                self.currentPhase = .forward
-            } else if gyro < -turnHysteresis {
-                self.currentPhase = .backward
-            }
-            
-            if isRecentlySwinging && activeRangeMode != .zeroStatic {
-                let halfTrip = max(self.roundTripDuration / 2.0, 0.04)
-                let elapsed = now.timeIntervalSince(lastTurnTime)
-                
-                // 1. 時間ベースの予測進行度
-                let linearProgress = min(elapsed / halfTrip, 1.0)
-                let timeBasedProgress = (1.0 - cos(.pi * linearProgress)) / 2.0
-                
-                // 2. 物理角度ベースのダイレクト進行度（手首の急加速に遅れゼロで追従するため、16ms分の角速度位相進み補償をプラス）
-                let predictedTheta = currentTheta + gyro * 0.016
-                let safeStrokeWidth = max(learnedStrokeWidth, isCompact ? 0.22 : 0.45)
-                let angleDelta = abs(predictedTheta - swingStartTheta)
-                let angleBasedProgress = min(max(angleDelta / safeStrokeWidth, 0.0), 1.0)
-                
-                // 手首モード（isCompact）時は角度ダイレクト追従を75%優先して遅れを根絶！通常時も45%ブレンドしてキレを向上
-                let idealProgress = isCompact
-                ? (angleBasedProgress * 0.75 + timeBasedProgress * 0.25)
-                : (angleBasedProgress * 0.45 + timeBasedProgress * 0.55)
-                
-                // 中央の有効描画幅（padding）を適用して、手首モードでは端から端まで95%即座に発光
-                let effectiveRatio = isCompact ? 0.95 : 0.76
-                let paddingRatio = (1.0 - effectiveRatio) / 2.0
-                let mappedProgress = (idealProgress - paddingRatio) / effectiveRatio
-                
-                if mappedProgress >= 0.0 && mappedProgress <= 1.0 {
-                    self.isEmitting = true
-                    self.strokeProgress = mappedProgress
-                } else {
-                    self.isEmitting = false
-                    self.strokeProgress = mappedProgress < 0.0 ? 0.0 : 1.0
-                }
-            } else if activeRangeMode == .zeroStatic {
-                self.isEmitting = true
-            } else {
-                self.isEmitting = false
-                self.strokeProgress = 0.0
+            return
+        }
+        
+        // =========================================================================
+        // 🔔 【純粋2倍速メトロノーム・シーケンス再生（センサーによる位置ズレ完全ゼロ）】
+        // 従来の片道0.38秒（往復0.76秒）を「2倍速」の片道0.19秒（往復0.38秒 = 2.63Hz）に固定！
+        // 手首30cmモード選択時はさらに高速な片道0.12秒（往復0.24秒 = 4.16Hz）で駆動。
+        // =========================================================================
+        let isCompact = (selectedRangeMode == .compactSnap)
+        let halfDuration: Double = isCompact ? 0.12 : 0.19
+        let fullCycleDuration: Double = halfDuration * 2.0
+        
+        self.roundTripDuration = fullCycleDuration
+        self.swingFrequencyHz = 1.0 / fullCycleDuration
+        
+        // 経過時間から現在のサイクル位置（0.0 〜 2.0）を算出（0.0〜1.0が往路、1.0〜2.0が復路）
+        let totalElapsed = now.timeIntervalSince(lastTurnTime)
+        let cyclePos = totalElapsed.truncatingRemainder(dividingBy: fullCycleDuration) / halfDuration
+        
+        let newPhase: SwingPhase = (cyclePos < 1.0) ? .forward : .backward
+        let halfLinearProgress: Double = (cyclePos < 1.0) ? cyclePos : (cyclePos - 1.0)
+        
+        // 折り返し（0.0 または 1.0 を跨いだ瞬間）に背面ライトを0.01秒間ピカッと閃光させる！
+        if newPhase != self.currentPhase {
+            self.currentPhase = newPhase
+            if isMetronomeTorchEnabled {
+                TorchService.shared.pulseMetronome(level: 1.0, duration: 0.01)
             }
         }
         
-        lastGyroZ = gyro
-    }
-    
-    /// スイングの折り返し処理（振れ幅の自動学習とリアルタイム周期適応）
-    private func handleTurnaround(isMovingPositive: Bool, turnaroundTheta: Double, currentGyro: Double, now: Date) {
-        let interval = now.timeIntervalSince(lastTurnTime)
-        let isCompact = (activeRangeMode == .compactSnap)
+        // 単振動（人の腕の振り）に合わせたコサインカーブ進行度 (0.0 -> 1.0)
+        let cosineProgress = (1.0 - cos(.pi * halfLinearProgress)) / 2.0
         
-        // 手首スナップ（4〜8Hzの超高速往復）に完全追従する極小インターバル（20ms〜）
-        let dynamicMinInterval = isCompact
-            ? max(0.020, min(0.065, 0.18 / max(abs(currentGyro), 1.0)))
-            : max(0.050, min(0.14, 0.45 / max(abs(currentGyro), 1.0)))
-        guard interval > dynamicMinInterval else { return }
+        // 以前うまくいっていた初期仕様と同じく、中央70%（手首モード時は90%）の区間でくっきり発光
+        let effectiveRatio: Double = isCompact ? 0.90 : 0.70
+        let paddingRatio: Double = (1.0 - effectiveRatio) / 2.0
+        let mappedProgress = (cosineProgress - paddingRatio) / effectiveRatio
         
-        // リアルタイム往復時間（Y: 往復時間）の計測と更新
-        let halfDuration = interval
-        let measuredRoundTrip = halfDuration * 2.0
-        if measuredRoundTrip >= 0.06 && measuredRoundTrip <= 2.5 {
-            let alpha = measuredRoundTrip < self.roundTripDuration ? 0.60 : 0.40
-            self.roundTripDuration = self.roundTripDuration * (1.0 - alpha) + measuredRoundTrip * alpha
-            self.swingFrequencyHz = 1.0 / max(self.roundTripDuration, 0.06)
-        }
-        
-        lastTurnTime = now
-        
-        let minAllowedWidth = isCompact ? 0.14 : 0.38
-        let maxAllowedWidth = isCompact ? 1.50 : 2.50
-        
-        if isMovingPositive {
-            // 「右→左」から「左→右」への切り返し（左端に到達！往路スタート）
-            leftTurnAngle = turnaroundTheta
-            swingStartTheta = turnaroundTheta
-            let width = abs(rightTurnAngle - leftTurnAngle)
-            if width > minAllowedWidth && width < maxAllowedWidth {
-                let widthAlpha = isCompact ? 0.45 : 0.35 // 手首モード時は素早く振れ幅に適応
-                learnedStrokeWidth = learnedStrokeWidth * (1.0 - widthAlpha) + width * widthAlpha
-                strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
-            }
+        if mappedProgress >= 0.0 && mappedProgress <= 1.0 {
+            self.isEmitting = true
+            self.strokeProgress = mappedProgress
         } else {
-            // 「左→右」から「右→左」への切り返し（右端に到達！復路スタート）
-            rightTurnAngle = turnaroundTheta
-            swingStartTheta = turnaroundTheta
-            let width = abs(rightTurnAngle - leftTurnAngle)
-            if width > minAllowedWidth && width < maxAllowedWidth {
-                let widthAlpha = isCompact ? 0.45 : 0.35
-                learnedStrokeWidth = learnedStrokeWidth * (1.0 - widthAlpha) + width * widthAlpha
-                strokeAngleRange = learnedStrokeWidth * (180.0 / .pi)
-            }
+            // 両端の折り返し瞬間（15%ずつ）はきっちり消灯し、背面ライトの閃光ポイントと分離する
+            self.isEmitting = false
+            self.strokeProgress = mappedProgress < 0.0 ? 0.0 : 1.0
         }
     }
     

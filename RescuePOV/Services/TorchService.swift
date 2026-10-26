@@ -1,7 +1,7 @@
 import Foundation
 import AVFoundation
 
-/// 背面LEDカメラトーチの制御およびSOSモールス信号発信
+/// 背面LEDカメラトーチの制御およびSOSモールス信号発信・メトロノーム同期パルス
 public final class TorchService: ObservableObject {
     public static let shared = TorchService()
     
@@ -81,9 +81,42 @@ public final class TorchService: ObservableObject {
         setTorch(on: false)
     }
     
-    /// 光通信用: 他の状態を変えずにトーチを直接ON/OFF
+    /// 光通信や直接制御用
     public func setTorchDirect(on: Bool) {
         setTorch(on: on)
+    }
+    
+    private let metronomeQueue = DispatchQueue(label: "com.rescuepov.metronome.flash", qos: .userInteractive)
+    
+    /// POVスイング端点メトロノーム用：最大光量（1.0）で0.01秒間（10ms：前回の1/10）だけ超短パルス閃光させる
+    public func pulseMetronome(level: Float = 1.0, duration: TimeInterval = 0.01) {
+        guard !isTorchOn, !isSOSActive else { return }
+        
+        metronomeQueue.async { [weak self] in
+            guard let self = self, !self.isTorchOn, !self.isSOSActive else { return }
+            guard let device = AVCaptureDevice.default(for: .video), device.hasTorch else { return }
+            
+            do {
+                try device.lockForConfiguration()
+                let maxLevel = AVCaptureDevice.maxAvailableTorchLevel
+                let safeLevel = max(0.01, min(level, maxLevel))
+                try device.setTorchModeOn(level: safeLevel)
+                device.unlockForConfiguration()
+            } catch {
+                return
+            }
+            
+            // 正確に0.01秒（10,000マイクロ秒）後に消灯
+            let microSec = UInt32(max(1_000, min(duration * 1_000_000, 100_000)))
+            usleep(microSec)
+            
+            guard !self.isTorchOn, !self.isSOSActive else { return }
+            do {
+                try device.lockForConfiguration()
+                device.torchMode = .off
+                device.unlockForConfiguration()
+            } catch {}
+        }
     }
     
     private func setTorch(on: Bool) {
