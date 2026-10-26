@@ -261,7 +261,7 @@ public final class MotionDetector: ObservableObject {
         // 手首30cmモード選択時はさらに高速な片道0.12秒（往復0.24秒 = 4.16Hz）で駆動。
         // =========================================================================
         let isCompact = (selectedRangeMode == .compactSnap)
-        let halfDuration: Double = isCompact ? 0.12 : 0.19
+        let halfDuration: Double = isCompact ? 0.12 : 0.1
         let fullCycleDuration: Double = halfDuration * 2.0
         
         self.roundTripDuration = fullCycleDuration
